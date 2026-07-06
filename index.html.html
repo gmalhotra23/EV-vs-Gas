@@ -1,0 +1,1287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>TripCost — Gas vs EV Calculator</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{background:#0f1117;color:#e8eaf0;font-family:'Inter',system-ui,sans-serif}
+    select option{background:#1e2130;color:#e8eaf0}
+    input::placeholder{color:#4b5563}
+    ::-webkit-scrollbar{width:6px}
+    ::-webkit-scrollbar-thumb{background:#2a2d3e;border-radius:3px}
+    .aci:hover{background:#2a2d3e!important}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .spin{animation:spin 1s linear infinite;display:inline-block}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// ─── Single source-of-truth car database ─────────────────────────────────────
+// Structure: DB[make][model][era] = { trimName: {type,mpg/range,tank/battery/efficiency,grade} }
+const DB = {
+  "Acura": {
+    "ILX":  { "2013-2015":{"Base 2.0L":{type:"gas",mpg:27,tank:13.2,grade:"regular"},"Tech 2.4L":{type:"gas",mpg:25,tank:13.2,grade:"premium"}},
+              "2016+":    {"Base":{type:"gas",mpg:24,tank:13.2,grade:"regular"},"Premium":{type:"gas",mpg:24,tank:13.2,grade:"regular"},"A-Spec":{type:"gas",mpg:24,tank:13.2,grade:"premium"}} },
+    "TL":   { "2004-2008":{"Base FWD":{type:"gas",mpg:22,tank:17.1,grade:"premium"},"Type-S":{type:"gas",mpg:19,tank:17.1,grade:"premium"}},
+              "2009-2014":{"Base":{type:"gas",mpg:21,tank:17.1,grade:"premium"},"SH-AWD":{type:"gas",mpg:20,tank:17.1,grade:"premium"}} },
+    "TLX":  { "2015+":{"Base FWD":{type:"gas",mpg:23,tank:17.1,grade:"premium"},"SH-AWD":{type:"gas",mpg:21,tank:17.1,grade:"premium"},"Type S":{type:"gas",mpg:19,tank:17.1,grade:"premium"}} },
+    "RDX":  { "2007-2012":{"Base AWD Turbo":{type:"gas",mpg:20,tank:17.1,grade:"premium"}},
+              "2013-2018":{"Base FWD":{type:"gas",mpg:26,tank:17.1,grade:"regular"},"AWD":{type:"gas",mpg:25,tank:17.1,grade:"regular"}},
+              "2019+":    {"Base FWD":{type:"gas",mpg:27,tank:17.1,grade:"regular"},"SH-AWD":{type:"gas",mpg:25,tank:17.1,grade:"regular"}} },
+    "MDX":  { "2001-2006":{"AWD":{type:"gas",mpg:17,tank:19.2,grade:"regular"}},
+              "2007-2013":{"Base AWD":{type:"gas",mpg:18,tank:19.5,grade:"regular"}},
+              "2014+":    {"Base FWD":{type:"gas",mpg:22,tank:19.5,grade:"regular"},"SH-AWD":{type:"gas",mpg:21,tank:19.5,grade:"regular"},"Type S":{type:"gas",mpg:19,tank:19.5,grade:"premium"}} }
+  },
+  "Audi": {
+    "A3":   { "2006-2013":{"2.0T FWD":{type:"gas",mpg:24,tank:13.2,grade:"premium"},"2.0T AWD":{type:"gas",mpg:23,tank:13.2,grade:"premium"}},
+              "2015+":    {"40 TFSI FWD":{type:"gas",mpg:32,tank:13.2,grade:"premium"},"45 TFSI AWD":{type:"gas",mpg:28,tank:13.2,grade:"premium"}} },
+    "A4":   { "2002-2008":{"1.8T FWD":{type:"gas",mpg:24,tank:16.4,grade:"premium"},"3.0 AWD":{type:"gas",mpg:20,tank:16.4,grade:"premium"}},
+              "2009-2016":{"2.0T FWD":{type:"gas",mpg:26,tank:13.2,grade:"premium"},"2.0T AWD":{type:"gas",mpg:24,tank:13.2,grade:"premium"}},
+              "2017+":    {"40 TFSI FWD":{type:"gas",mpg:28,tank:13.2,grade:"premium"},"45 TFSI AWD":{type:"gas",mpg:26,tank:13.2,grade:"premium"}} },
+    "Q5":   { "2009-2017":{"2.0T AWD":{type:"gas",mpg:22,tank:19.8,grade:"premium"},"3.0T AWD":{type:"gas",mpg:19,tank:19.8,grade:"premium"}},
+              "2018+":    {"45 TFSI AWD":{type:"gas",mpg:25,tank:19.8,grade:"premium"},"SQ5 AWD":{type:"gas",mpg:21,tank:19.8,grade:"premium"}} },
+    "Q7":   { "2007-2015":{"3.6 AWD":{type:"gas",mpg:16,tank:26.9,grade:"premium"}},
+              "2016+":    {"45 TFSI AWD":{type:"gas",mpg:21,tank:22.5,grade:"premium"},"55 TFSI AWD":{type:"gas",mpg:19,tank:22.5,grade:"premium"}} },
+    "e-tron":    { "2019+":{"55 quattro":{type:"ev",range:222,efficiency:2.5,battery:95},"S quattro":{type:"ev",range:208,efficiency:2.4,battery:95}} },
+    "Q4 e-tron": { "2022+":{"40 RWD":{type:"ev",range:265,efficiency:3.0,battery:82},"50 quattro":{type:"ev",range:241,efficiency:2.8,battery:82}} },
+    "e-tron GT": { "2022+":{"GT":{type:"ev",range:238,efficiency:3.1,battery:93},"RS GT":{type:"ev",range:232,efficiency:3.0,battery:93}} }
+  },
+  "BMW": {
+    "3 Series": { "1999-2005":{"325i RWD":{type:"gas",mpg:21,tank:16.6,grade:"premium"},"330i RWD":{type:"gas",mpg:20,tank:16.6,grade:"premium"},"M3":{type:"gas",mpg:16,tank:14.5,grade:"premium"}},
+                  "2006-2011":{"328i RWD":{type:"gas",mpg:23,tank:15.6,grade:"premium"},"335i RWD":{type:"gas",mpg:21,tank:15.6,grade:"premium"},"M3":{type:"gas",mpg:15,tank:15.6,grade:"premium"}},
+                  "2012-2018":{"320i RWD":{type:"gas",mpg:27,tank:15.6,grade:"premium"},"328i RWD":{type:"gas",mpg:26,tank:15.6,grade:"premium"},"340i xDrive":{type:"gas",mpg:25,tank:15.6,grade:"premium"}},
+                  "2019+":    {"330i RWD":{type:"gas",mpg:30,tank:15.6,grade:"premium"},"330i xDrive":{type:"gas",mpg:27,tank:15.6,grade:"premium"},"M340i":{type:"gas",mpg:25,tank:15.6,grade:"premium"}} },
+    "5 Series": { "2001-2010":{"525i RWD":{type:"gas",mpg:20,tank:18.5,grade:"premium"},"530i RWD":{type:"gas",mpg:20,tank:18.5,grade:"premium"},"550i RWD":{type:"gas",mpg:16,tank:18.5,grade:"premium"}},
+                  "2011-2016":{"528i RWD":{type:"gas",mpg:24,tank:15.6,grade:"premium"},"535i RWD":{type:"gas",mpg:23,tank:15.6,grade:"premium"},"550i xDrive":{type:"gas",mpg:19,tank:15.6,grade:"premium"}},
+                  "2017+":    {"530i RWD":{type:"gas",mpg:28,tank:15.6,grade:"premium"},"540i xDrive":{type:"gas",mpg:24,tank:15.6,grade:"premium"},"M550i":{type:"gas",mpg:21,tank:15.6,grade:"premium"}} },
+    "X3":       { "2004-2010":{"3.0si AWD":{type:"gas",mpg:18,tank:17.7,grade:"premium"}},
+                  "2011-2017":{"xDrive28i":{type:"gas",mpg:23,tank:17.2,grade:"premium"},"xDrive35i":{type:"gas",mpg:20,tank:17.2,grade:"premium"}},
+                  "2018+":    {"sDrive30i":{type:"gas",mpg:28,tank:17.2,grade:"premium"},"xDrive30i":{type:"gas",mpg:26,tank:17.2,grade:"premium"},"M40i":{type:"gas",mpg:22,tank:17.2,grade:"premium"}} },
+    "X5":       { "2000-2006":{"3.0i AWD":{type:"gas",mpg:15,tank:24.6,grade:"premium"},"4.4i AWD":{type:"gas",mpg:13,tank:24.6,grade:"premium"}},
+                  "2007-2013":{"xDrive30i":{type:"gas",mpg:17,tank:21.9,grade:"premium"},"xDrive35i":{type:"gas",mpg:16,tank:21.9,grade:"premium"}},
+                  "2014+":    {"xDrive40i":{type:"gas",mpg:21,tank:21.9,grade:"premium"},"M60i":{type:"gas",mpg:18,tank:21.9,grade:"premium"}} },
+    "i4":  { "2022+":{"eDrive40 RWD":{type:"ev",range:301,efficiency:3.5,battery:83.9},"xDrive40":{type:"ev",range:269,efficiency:3.2,battery:83.9},"M50":{type:"ev",range:227,efficiency:3.0,battery:83.9}} },
+    "iX":  { "2022+":{"xDrive40":{type:"ev",range:324,efficiency:2.9,battery:111.5},"xDrive50":{type:"ev",range:380,efficiency:3.0,battery:111.5}} }
+  },
+  "Buick": {
+    "Enclave":  { "2008-2017":{"CX FWD":{type:"gas",mpg:17,tank:22.0,grade:"regular"},"CXL AWD":{type:"gas",mpg:16,tank:22.0,grade:"regular"}},
+                  "2018+":    {"Essence FWD":{type:"gas",mpg:19,tank:19.4,grade:"regular"},"Avenir AWD":{type:"gas",mpg:18,tank:19.4,grade:"regular"}} },
+    "Encore":   { "2013-2019":{"Base FWD":{type:"gas",mpg:27,tank:14.0,grade:"regular"},"Sport Touring AWD":{type:"gas",mpg:25,tank:14.0,grade:"regular"}},
+                  "2020+":    {"Preferred FWD":{type:"gas",mpg:29,tank:13.2,grade:"regular"},"Essence AWD":{type:"gas",mpg:26,tank:13.2,grade:"regular"}} },
+    "Envision": { "2016-2020":{"Preferred FWD":{type:"gas",mpg:24,tank:15.9,grade:"regular"},"Premium AWD":{type:"gas",mpg:22,tank:15.9,grade:"regular"}},
+                  "2021+":    {"Preferred FWD":{type:"gas",mpg:26,tank:15.9,grade:"regular"},"Avenir AWD":{type:"gas",mpg:24,tank:15.9,grade:"regular"}} },
+    "LaCrosse": { "2005-2009":{"CX":{type:"gas",mpg:20,tank:17.5,grade:"regular"},"CXS V6":{type:"gas",mpg:18,tank:17.5,grade:"regular"}},
+                  "2010+":    {"Base FWD":{type:"gas",mpg:25,tank:18.0,grade:"regular"},"AWD":{type:"gas",mpg:23,tank:18.0,grade:"regular"}} },
+    "Verano":   { "2012-2017":{"Base":{type:"gas",mpg:25,tank:15.6,grade:"regular"},"Sport Touring":{type:"gas",mpg:25,tank:15.6,grade:"regular"},"Turbo":{type:"gas",mpg:22,tank:15.6,grade:"premium"}} }
+  },
+  "Cadillac": {
+    "CTS":      { "2003-2007":{"2.8L RWD":{type:"gas",mpg:19,tank:18.0,grade:"premium"},"3.6L RWD":{type:"gas",mpg:18,tank:18.0,grade:"premium"},"V RWD":{type:"gas",mpg:14,tank:18.0,grade:"premium"}},
+                  "2008-2014":{"3.0L RWD":{type:"gas",mpg:20,tank:15.7,grade:"premium"},"3.6L RWD":{type:"gas",mpg:19,tank:15.7,grade:"premium"},"V RWD":{type:"gas",mpg:14,tank:15.7,grade:"premium"}},
+                  "2015+":    {"2.0T RWD":{type:"gas",mpg:22,tank:19.0,grade:"premium"},"3.6L RWD":{type:"gas",mpg:20,tank:19.0,grade:"premium"},"V-Sport RWD":{type:"gas",mpg:17,tank:19.0,grade:"premium"}} },
+    "Escalade": { "2002-2006":{"2WD":{type:"gas",mpg:13,tank:31.0,grade:"regular"},"4WD":{type:"gas",mpg:12,tank:31.0,grade:"regular"}},
+                  "2007-2014":{"2WD":{type:"gas",mpg:14,tank:26.0,grade:"regular"},"4WD":{type:"gas",mpg:13,tank:26.0,grade:"regular"}},
+                  "2015+":    {"2WD":{type:"gas",mpg:16,tank:31.0,grade:"regular"},"4WD":{type:"gas",mpg:15,tank:31.0,grade:"regular"}} },
+    "XT5":      { "2017+":{"FWD":{type:"gas",mpg:24,tank:19.0,grade:"regular"},"AWD":{type:"gas",mpg:22,tank:19.0,grade:"regular"}} },
+    "CT5":      { "2020+":{"2.0T RWD":{type:"gas",mpg:22,tank:18.0,grade:"premium"},"V-Sport AWD":{type:"gas",mpg:19,tank:18.0,grade:"premium"},"Blackwing AWD":{type:"gas",mpg:15,tank:18.0,grade:"premium"}} },
+    "LYRIQ":    { "2023+":{"RWD":{type:"ev",range:314,efficiency:3.3,battery:102},"AWD":{type:"ev",range:307,efficiency:3.2,battery:102}} }
+  },
+  "Chevrolet": {
+    "Malibu":         { "2004-2012":{"LS":{type:"gas",mpg:24,tank:16.3,grade:"regular"},"LTZ V6":{type:"gas",mpg:22,tank:16.3,grade:"regular"}},
+                        "2013-2015":{"LS Eco":{type:"gas",mpg:29,tank:15.8,grade:"regular"},"LT":{type:"gas",mpg:26,tank:15.8,grade:"regular"}},
+                        "2016+":    {"LS":{type:"gas",mpg:29,tank:15.7,grade:"regular"},"LT":{type:"gas",mpg:32,tank:15.7,grade:"regular"},"Premier":{type:"gas",mpg:32,tank:15.7,grade:"regular"}} },
+    "Silverado 1500": { "1999-2006":{"V6 2WD":{type:"gas",mpg:17,tank:26.0,grade:"regular"},"V8 5.3 2WD":{type:"gas",mpg:15,tank:26.0,grade:"regular"}},
+                        "2007-2013":{"V6 2WD":{type:"gas",mpg:18,tank:26.0,grade:"regular"},"V8 5.3 2WD":{type:"gas",mpg:16,tank:26.0,grade:"regular"}},
+                        "2014-2018":{"V6 2WD":{type:"gas",mpg:20,tank:26.0,grade:"regular"},"V8 5.3 2WD":{type:"gas",mpg:18,tank:26.0,grade:"regular"},"Diesel":{type:"gas",mpg:24,tank:22.0,grade:"regular"}},
+                        "2019+":    {"V6 2WD":{type:"gas",mpg:21,tank:24.0,grade:"regular"},"V8 5.3 2WD":{type:"gas",mpg:19,tank:24.0,grade:"regular"},"V8 4WD":{type:"gas",mpg:17,tank:24.0,grade:"regular"},"Diesel":{type:"gas",mpg:27,tank:22.0,grade:"regular"}} },
+    "Equinox":        { "2005-2009":{"FWD 4-cyl":{type:"gas",mpg:20,tank:16.6,grade:"regular"},"V6 AWD":{type:"gas",mpg:17,tank:16.6,grade:"regular"}},
+                        "2010-2017":{"LS FWD":{type:"gas",mpg:26,tank:14.9,grade:"regular"},"AWD V6":{type:"gas",mpg:20,tank:14.9,grade:"regular"}},
+                        "2018+":    {"LS FWD":{type:"gas",mpg:28,tank:14.9,grade:"regular"},"AWD":{type:"gas",mpg:26,tank:14.9,grade:"regular"}} },
+    "Tahoe":          { "2000-2006":{"2WD V8":{type:"gas",mpg:14,tank:31.5,grade:"regular"},"4WD V8":{type:"gas",mpg:13,tank:31.5,grade:"regular"}},
+                        "2007-2014":{"2WD V8":{type:"gas",mpg:15,tank:26.0,grade:"regular"},"4WD V8":{type:"gas",mpg:14,tank:26.0,grade:"regular"}},
+                        "2015+":    {"2WD V8":{type:"gas",mpg:16,tank:26.0,grade:"regular"},"4WD V8":{type:"gas",mpg:14,tank:28.0,grade:"regular"}} },
+    "Traverse":       { "2009-2017":{"FWD":{type:"gas",mpg:18,tank:21.0,grade:"regular"},"AWD":{type:"gas",mpg:17,tank:21.0,grade:"regular"}},
+                        "2018+":    {"LS FWD":{type:"gas",mpg:21,tank:21.7,grade:"regular"},"AWD":{type:"gas",mpg:19,tank:21.7,grade:"regular"}} },
+    "Bolt EV":        { "2017+":{"LT":{type:"ev",range:259,efficiency:3.5,battery:65},"Premier":{type:"ev",range:259,efficiency:3.5,battery:65}} },
+    "Equinox EV":     { "2024+":{"1LT RWD":{type:"ev",range:319,efficiency:3.4,battery:85},"2LT AWD":{type:"ev",range:305,efficiency:3.2,battery:85}} },
+    "Silverado EV":   { "2024+":{"Work Truck":{type:"ev",range:400,efficiency:2.2,battery:200},"LT AWD":{type:"ev",range:450,efficiency:2.4,battery:200}} }
+  },
+  "Chrysler": {
+    "300":     { "2005-2010":{"Base V6 RWD":{type:"gas",mpg:19,tank:19.0,grade:"regular"},"C V8 RWD":{type:"gas",mpg:16,tank:19.0,grade:"regular"},"SRT8":{type:"gas",mpg:14,tank:19.0,grade:"premium"}},
+                 "2011+":    {"300 V6 RWD":{type:"gas",mpg:23,tank:19.0,grade:"regular"},"300S AWD":{type:"gas",mpg:19,tank:19.0,grade:"regular"},"300C V8":{type:"gas",mpg:18,tank:19.0,grade:"regular"}} },
+    "Pacifica":{ "2004-2008":{"Base FWD":{type:"gas",mpg:17,tank:20.0,grade:"regular"}},
+                 "2017+":    {"Touring FWD":{type:"gas",mpg:22,tank:19.5,grade:"regular"},"Hybrid FWD":{type:"gas",mpg:30,tank:16.5,grade:"regular"}} }
+  },
+  "Dodge": {
+    "Charger":       { "2006-2010":{"SE V6":{type:"gas",mpg:19,tank:18.0,grade:"regular"},"R/T V8":{type:"gas",mpg:16,tank:18.0,grade:"regular"},"SRT8":{type:"gas",mpg:14,tank:18.0,grade:"premium"}},
+                       "2011-2014":{"SE V6":{type:"gas",mpg:20,tank:18.5,grade:"regular"},"R/T V8":{type:"gas",mpg:17,tank:18.5,grade:"regular"}},
+                       "2015+":    {"SXT V6":{type:"gas",mpg:23,tank:18.5,grade:"regular"},"R/T V8":{type:"gas",mpg:19,tank:18.5,grade:"regular"},"Scat Pack":{type:"gas",mpg:16,tank:18.5,grade:"premium"},"Hellcat":{type:"gas",mpg:13,tank:18.5,grade:"premium"}} },
+    "Durango":       { "2004-2009":{"V6 2WD":{type:"gas",mpg:15,tank:25.0,grade:"regular"},"V8 2WD":{type:"gas",mpg:14,tank:25.0,grade:"regular"}},
+                       "2011+":    {"SXT AWD V6":{type:"gas",mpg:18,tank:24.6,grade:"regular"},"R/T AWD V8":{type:"gas",mpg:15,tank:24.6,grade:"regular"},"SRT V8":{type:"gas",mpg:13,tank:24.6,grade:"premium"}} },
+    "Charger Daytona EV":{ "2024+":{"RWD":{type:"ev",range:317,efficiency:3.2,battery:100.5},"R/T AWD":{type:"ev",range:270,efficiency:2.9,battery:100.5}} }
+  },
+  "Ford": {
+    "F-150":         { "1997-2003":{"V6 2WD":{type:"gas",mpg:16,tank:25.0,grade:"regular"},"V8 4.6 2WD":{type:"gas",mpg:15,tank:25.0,grade:"regular"},"V8 5.4 2WD":{type:"gas",mpg:14,tank:25.0,grade:"regular"}},
+                       "2004-2008":{"V6 2WD":{type:"gas",mpg:16,tank:26.0,grade:"regular"},"V8 5.4 2WD":{type:"gas",mpg:14,tank:26.0,grade:"regular"},"V8 4WD":{type:"gas",mpg:13,tank:26.0,grade:"regular"}},
+                       "2009-2014":{"V6 2WD":{type:"gas",mpg:17,tank:26.0,grade:"regular"},"EcoBoost V6":{type:"gas",mpg:18,tank:26.0,grade:"regular"}},
+                       "2015-2020":{"V6 2WD":{type:"gas",mpg:20,tank:26.0,grade:"regular"},"EcoBoost V6 2WD":{type:"gas",mpg:20,tank:26.0,grade:"regular"},"V8 2WD":{type:"gas",mpg:17,tank:26.0,grade:"regular"}},
+                       "2021+":    {"V6 2WD":{type:"gas",mpg:24,tank:26.0,grade:"regular"},"V8 2WD":{type:"gas",mpg:18,tank:26.0,grade:"regular"},"PowerBoost Hybrid":{type:"gas",mpg:25,tank:30.6,grade:"regular"}} },
+    "Mustang":       { "2000-2004":{"V6":{type:"gas",mpg:20,tank:15.7,grade:"regular"},"GT V8":{type:"gas",mpg:17,tank:15.7,grade:"regular"}},
+                       "2005-2009":{"V6":{type:"gas",mpg:20,tank:16.0,grade:"regular"},"GT V8":{type:"gas",mpg:17,tank:16.0,grade:"regular"},"Shelby GT500":{type:"gas",mpg:15,tank:16.0,grade:"premium"}},
+                       "2010-2014":{"V6":{type:"gas",mpg:22,tank:16.0,grade:"regular"},"GT V8":{type:"gas",mpg:18,tank:16.0,grade:"regular"}},
+                       "2015+":    {"EcoBoost":{type:"gas",mpg:25,tank:16.0,grade:"regular"},"GT":{type:"gas",mpg:18,tank:16.0,grade:"regular"},"GT500":{type:"gas",mpg:13,tank:16.0,grade:"premium"}} },
+    "Explorer":      { "2000-2010":{"V6 2WD":{type:"gas",mpg:15,tank:22.5,grade:"regular"},"V8 4WD":{type:"gas",mpg:13,tank:22.5,grade:"regular"}},
+                       "2011-2019":{"Base FWD 4-cyl":{type:"gas",mpg:22,tank:18.6,grade:"regular"},"AWD V6":{type:"gas",mpg:19,tank:18.6,grade:"regular"}},
+                       "2020+":    {"RWD Base":{type:"gas",mpg:22,tank:18.6,grade:"regular"},"AWD XLT":{type:"gas",mpg:20,tank:18.6,grade:"regular"},"ST AWD":{type:"gas",mpg:18,tank:18.6,grade:"premium"}} },
+    "Escape":        { "2001-2007":{"FWD 4-cyl":{type:"gas",mpg:22,tank:16.5,grade:"regular"},"AWD V6":{type:"gas",mpg:18,tank:16.5,grade:"regular"}},
+                       "2008-2019":{"FWD 4-cyl":{type:"gas",mpg:26,tank:15.7,grade:"regular"},"AWD":{type:"gas",mpg:23,tank:15.7,grade:"regular"},"Hybrid FWD":{type:"gas",mpg:40,tank:14.2,grade:"regular"}},
+                       "2020+":    {"Base FWD":{type:"gas",mpg:30,tank:15.7,grade:"regular"},"SEL AWD":{type:"gas",mpg:27,tank:15.7,grade:"regular"},"Hybrid FWD":{type:"gas",mpg:44,tank:14.2,grade:"regular"}} },
+    "Maverick":      { "2022+":{"Hybrid FWD":{type:"gas",mpg:42,tank:15.5,grade:"regular"},"EcoBoost FWD":{type:"gas",mpg:29,tank:15.5,grade:"regular"},"EcoBoost AWD":{type:"gas",mpg:26,tank:15.5,grade:"regular"}} },
+    "Ranger":        { "2000-2011":{"2WD 4-cyl":{type:"gas",mpg:22,tank:16.5,grade:"regular"},"4WD V6":{type:"gas",mpg:16,tank:19.5,grade:"regular"}},
+                       "2019+":    {"2WD EcoBoost":{type:"gas",mpg:23,tank:18.0,grade:"regular"},"4WD EcoBoost":{type:"gas",mpg:20,tank:18.0,grade:"regular"}} },
+    "Bronco":        { "2021+":{"Base 4WD 4-cyl":{type:"gas",mpg:22,tank:16.9,grade:"regular"},"4-cyl Sasquatch":{type:"gas",mpg:20,tank:16.9,grade:"regular"},"V6 Sasquatch":{type:"gas",mpg:18,tank:16.9,grade:"regular"}} },
+    "Mustang Mach-E":{ "2021+":{"Select RWD SR":{type:"ev",range:247,efficiency:3.0,battery:75.7},"Premium RWD ER":{type:"ev",range:312,efficiency:3.1,battery:91},"GT AWD":{type:"ev",range:270,efficiency:2.9,battery:91}} },
+    "F-150 Lightning":{"2022+":{"Pro SR 4WD":{type:"ev",range:240,efficiency:2.1,battery:98},"XLT ER 4WD":{type:"ev",range:320,efficiency:2.3,battery:131},"Platinum ER":{type:"ev",range:300,efficiency:2.2,battery:131}} }
+  },
+  "GMC": {
+    "Sierra 1500": { "1999-2006":{"V6 2WD":{type:"gas",mpg:16,tank:24.0,grade:"regular"},"V8 5.3 2WD":{type:"gas",mpg:15,tank:24.0,grade:"regular"}},
+                     "2007-2013":{"V6 2WD":{type:"gas",mpg:17,tank:24.0,grade:"regular"},"V8 5.3 2WD":{type:"gas",mpg:15,tank:24.0,grade:"regular"}},
+                     "2014+":    {"V6 2WD":{type:"gas",mpg:21,tank:24.0,grade:"regular"},"V8 5.3 2WD":{type:"gas",mpg:18,tank:24.0,grade:"regular"},"Diesel":{type:"gas",mpg:27,tank:22.0,grade:"regular"}} },
+    "Yukon":      { "2000-2006":{"2WD V8":{type:"gas",mpg:14,tank:28.0,grade:"regular"},"4WD V8":{type:"gas",mpg:13,tank:28.0,grade:"regular"}},
+                    "2007-2014":{"2WD V8":{type:"gas",mpg:15,tank:26.0,grade:"regular"},"4WD V8":{type:"gas",mpg:14,tank:26.0,grade:"regular"}},
+                    "2015+":    {"2WD V8":{type:"gas",mpg:16,tank:28.0,grade:"regular"},"4WD V8":{type:"gas",mpg:15,tank:28.0,grade:"regular"}} },
+    "Terrain":    { "2010-2017":{"FWD 4-cyl":{type:"gas",mpg:24,tank:14.9,grade:"regular"},"AWD V6":{type:"gas",mpg:20,tank:14.9,grade:"regular"}},
+                    "2018+":    {"FWD":{type:"gas",mpg:29,tank:14.9,grade:"regular"},"AWD":{type:"gas",mpg:26,tank:14.9,grade:"regular"}} },
+    "Hummer EV":  { "2022+":{"AWD Edition 1":{type:"ev",range:329,efficiency:1.8,battery:212},"EV3X AWD":{type:"ev",range:314,efficiency:1.7,battery:212}} },
+    "Sierra EV":  { "2024+":{"Denali AWD":{type:"ev",range:440,efficiency:2.3,battery:200}} }
+  },
+  "Genesis": {
+    "G70":  { "2019+":{"2.0T RWD":{type:"gas",mpg:25,tank:15.9,grade:"premium"},"3.3T AWD":{type:"gas",mpg:19,tank:15.9,grade:"premium"}} },
+    "G80":  { "2017-2022":{"2.5T RWD":{type:"gas",mpg:22,tank:17.4,grade:"premium"},"3.5T AWD":{type:"gas",mpg:18,tank:17.4,grade:"premium"}},
+              "2023+":    {"2.5T RWD":{type:"gas",mpg:23,tank:17.4,grade:"premium"},"Electrified AWD":{type:"ev",range:282,efficiency:3.2,battery:87.2}} },
+    "GV70": { "2022+":{"2.5T AWD":{type:"gas",mpg:23,tank:17.4,grade:"premium"},"3.5T AWD":{type:"gas",mpg:19,tank:17.4,grade:"premium"},"Electrified AWD":{type:"ev",range:236,efficiency:3.0,battery:77.4}} },
+    "GV80": { "2021+":{"2.5T AWD":{type:"gas",mpg:22,tank:19.8,grade:"premium"},"3.5T AWD":{type:"gas",mpg:18,tank:19.8,grade:"premium"}} },
+    "GV60": { "2023+":{"Standard RWD":{type:"ev",range:248,efficiency:3.2,battery:77.4},"Performance AWD":{type:"ev",range:235,efficiency:3.0,battery:77.4}} }
+  },
+  "Honda": {
+    "Civic":  { "2001-2005":{"DX":{type:"gas",mpg:28,tank:13.2,grade:"regular"},"EX":{type:"gas",mpg:30,tank:13.2,grade:"regular"},"Si":{type:"gas",mpg:27,tank:13.2,grade:"regular"}},
+                "2006-2011":{"DX":{type:"gas",mpg:28,tank:13.2,grade:"regular"},"EX":{type:"gas",mpg:30,tank:13.2,grade:"regular"},"Si":{type:"gas",mpg:27,tank:13.2,grade:"premium"}},
+                "2012-2015":{"LX":{type:"gas",mpg:30,tank:13.2,grade:"regular"},"EX":{type:"gas",mpg:33,tank:13.2,grade:"regular"},"Si":{type:"gas",mpg:28,tank:13.2,grade:"premium"}},
+                "2016+":    {"LX":{type:"gas",mpg:32,tank:12.4,grade:"regular"},"Sport":{type:"gas",mpg:31,tank:12.4,grade:"regular"},"EX":{type:"gas",mpg:36,tank:12.4,grade:"regular"},"Type R":{type:"gas",mpg:27,tank:12.4,grade:"premium"}} },
+    "Accord": { "2003-2007":{"LX 4-cyl":{type:"gas",mpg:26,tank:17.1,grade:"regular"},"EX V6":{type:"gas",mpg:22,tank:17.1,grade:"regular"}},
+                "2008-2017":{"LX 4-cyl":{type:"gas",mpg:27,tank:17.2,grade:"regular"},"Sport":{type:"gas",mpg:30,tank:17.2,grade:"regular"},"V6":{type:"gas",mpg:24,tank:17.2,grade:"regular"}},
+                "2018+":    {"LX":{type:"gas",mpg:29,tank:14.8,grade:"regular"},"Sport":{type:"gas",mpg:33,tank:14.8,grade:"regular"},"Touring Hybrid":{type:"gas",mpg:44,tank:12.8,grade:"regular"}} },
+    "CR-V":   { "2002-2006":{"LX AWD":{type:"gas",mpg:23,tank:15.3,grade:"regular"}},
+                "2007-2016":{"LX FWD":{type:"gas",mpg:26,tank:15.3,grade:"regular"},"EX AWD":{type:"gas",mpg:24,tank:15.3,grade:"regular"}},
+                "2017+":    {"LX FWD":{type:"gas",mpg:30,tank:14.0,grade:"regular"},"EX AWD":{type:"gas",mpg:28,tank:14.0,grade:"regular"},"Hybrid FWD":{type:"gas",mpg:43,tank:13.2,grade:"regular"}} },
+    "Pilot":  { "2003-2015":{"AWD":{type:"gas",mpg:18,tank:19.4,grade:"regular"}},
+                "2016+":    {"LX FWD":{type:"gas",mpg:20,tank:19.5,grade:"regular"},"AWD":{type:"gas",mpg:19,tank:19.5,grade:"regular"},"TrailSport AWD":{type:"gas",mpg:18,tank:19.5,grade:"regular"}} },
+    "Odyssey":{ "2002-2010":{"LX FWD":{type:"gas",mpg:20,tank:21.0,grade:"regular"},"EX FWD":{type:"gas",mpg:20,tank:21.0,grade:"regular"}},
+                "2011+":    {"LX FWD":{type:"gas",mpg:22,tank:19.5,grade:"regular"},"Touring FWD":{type:"gas",mpg:22,tank:19.5,grade:"regular"}} },
+    "Prologue":{ "2024+":{"EX-L AWD":{type:"ev",range:296,efficiency:3.1,battery:85},"Elite AWD":{type:"ev",range:296,efficiency:3.1,battery:85}} }
+  },
+  "Hyundai": {
+    "Elantra":  { "2001-2010":{"GLS":{type:"gas",mpg:27,tank:12.0,grade:"regular"}},
+                  "2011-2016":{"GLS":{type:"gas",mpg:28,tank:13.2,grade:"regular"},"Limited":{type:"gas",mpg:28,tank:13.2,grade:"regular"}},
+                  "2017+":    {"SE":{type:"gas",mpg:33,tank:14.0,grade:"regular"},"SEL":{type:"gas",mpg:37,tank:14.0,grade:"regular"},"N Line":{type:"gas",mpg:29,tank:14.0,grade:"regular"},"Hybrid Blue":{type:"gas",mpg:54,tank:11.4,grade:"regular"}} },
+    "Sonata":   { "2006-2010":{"GLS":{type:"gas",mpg:24,tank:18.5,grade:"regular"},"SE V6":{type:"gas",mpg:20,tank:18.5,grade:"regular"}},
+                  "2011-2014":{"GLS":{type:"gas",mpg:28,tank:18.5,grade:"regular"}},
+                  "2015+":    {"SE":{type:"gas",mpg:28,tank:15.9,grade:"regular"},"Sport 2.0T":{type:"gas",mpg:28,tank:15.9,grade:"regular"},"Hybrid Blue":{type:"gas",mpg:52,tank:14.3,grade:"regular"}} },
+    "Tucson":   { "2005-2009":{"GLS AWD":{type:"gas",mpg:22,tank:17.2,grade:"regular"}},
+                  "2010-2015":{"GLS FWD":{type:"gas",mpg:23,tank:17.2,grade:"regular"},"Limited AWD":{type:"gas",mpg:21,tank:17.2,grade:"regular"}},
+                  "2016+":    {"SE FWD":{type:"gas",mpg:28,tank:14.8,grade:"regular"},"SEL AWD":{type:"gas",mpg:26,tank:14.8,grade:"regular"},"Hybrid AWD":{type:"gas",mpg:38,tank:14.3,grade:"regular"}} },
+    "Santa Fe": { "2001-2012":{"FWD":{type:"gas",mpg:20,tank:17.2,grade:"regular"},"AWD V6":{type:"gas",mpg:17,tank:17.2,grade:"regular"}},
+                  "2013+":    {"SE FWD":{type:"gas",mpg:22,tank:17.7,grade:"regular"},"AWD":{type:"gas",mpg:20,tank:17.7,grade:"regular"},"Hybrid AWD":{type:"gas",mpg:33,tank:14.3,grade:"regular"}} },
+    "Palisade": { "2020+":{"SE FWD":{type:"gas",mpg:19,tank:18.8,grade:"regular"},"AWD":{type:"gas",mpg:18,tank:18.8,grade:"regular"}} },
+    "Ioniq 5":  { "2022+":{"SE RWD LR":{type:"ev",range:303,efficiency:3.3,battery:77.4},"Limited AWD":{type:"ev",range:266,efficiency:3.0,battery:77.4}} },
+    "Ioniq 6":  { "2023+":{"SE RWD":{type:"ev",range:361,efficiency:4.0,battery:77.4},"SEL AWD":{type:"ev",range:316,efficiency:3.6,battery:77.4}} },
+    "Kona EV":  { "2019+":{"SE RWD":{type:"ev",range:258,efficiency:3.6,battery:64.8},"Limited RWD":{type:"ev",range:258,efficiency:3.6,battery:64.8}} }
+  },
+  "Infiniti": {
+    "G35 / G37":{ "2003-2008":{"G35 Sedan RWD":{type:"gas",mpg:20,tank:20.0,grade:"premium"},"G35 Coupe RWD":{type:"gas",mpg:19,tank:20.0,grade:"premium"}},
+                  "2009-2013":{"G37 Sedan RWD":{type:"gas",mpg:19,tank:20.0,grade:"premium"},"G37 AWD":{type:"gas",mpg:18,tank:20.0,grade:"premium"}} },
+    "Q50":      { "2014+":{"2.0t RWD":{type:"gas",mpg:27,tank:20.0,grade:"premium"},"3.0t AWD":{type:"gas",mpg:22,tank:20.0,grade:"premium"},"Red Sport 400 AWD":{type:"gas",mpg:22,tank:20.0,grade:"premium"}} },
+    "QX60":     { "2013-2020":{"FWD":{type:"gas",mpg:20,tank:21.0,grade:"regular"},"AWD":{type:"gas",mpg:19,tank:21.0,grade:"regular"}},
+                  "2022+":    {"Pure FWD":{type:"gas",mpg:20,tank:21.0,grade:"regular"},"Luxe AWD":{type:"gas",mpg:19,tank:21.0,grade:"regular"}} },
+    "QX80":     { "2011+":{"2WD":{type:"gas",mpg:14,tank:26.0,grade:"regular"},"4WD":{type:"gas",mpg:14,tank:26.0,grade:"regular"}} }
+  },
+  "Jeep": {
+    "Wrangler":       { "1997-2006":{"Sport 4WD 4.0L":{type:"gas",mpg:16,tank:19.0,grade:"regular"},"Rubicon 4WD":{type:"gas",mpg:15,tank:19.0,grade:"regular"}},
+                        "2007-2017":{"Sport 4WD 3.8L":{type:"gas",mpg:16,tank:18.6,grade:"regular"},"Sahara 4WD":{type:"gas",mpg:17,tank:18.6,grade:"regular"},"Rubicon 4WD":{type:"gas",mpg:16,tank:18.6,grade:"regular"}},
+                        "2018+":    {"Sport 4WD 4-cyl":{type:"gas",mpg:22,tank:17.5,grade:"regular"},"Sahara 4WD V6":{type:"gas",mpg:19,tank:17.5,grade:"regular"},"Rubicon 4WD":{type:"gas",mpg:18,tank:17.5,grade:"regular"},"4xe PHEV":{type:"gas",mpg:49,tank:17.5,grade:"regular"}} },
+    "Grand Cherokee": { "1999-2004":{"Laredo 4WD":{type:"gas",mpg:15,tank:20.5,grade:"regular"},"Limited V8 4WD":{type:"gas",mpg:14,tank:20.5,grade:"regular"}},
+                        "2005-2010":{"Laredo 4WD V6":{type:"gas",mpg:16,tank:20.5,grade:"regular"},"Limited 4WD V8":{type:"gas",mpg:14,tank:20.5,grade:"regular"}},
+                        "2011-2021":{"Laredo 4WD V6":{type:"gas",mpg:19,tank:24.6,grade:"regular"},"Limited 4WD V8":{type:"gas",mpg:16,tank:24.6,grade:"regular"},"SRT 4WD":{type:"gas",mpg:14,tank:24.6,grade:"premium"}},
+                        "2022+":    {"Laredo 4WD V6":{type:"gas",mpg:22,tank:24.6,grade:"regular"},"4xe PHEV":{type:"gas",mpg:56,tank:17.1,grade:"regular"},"Trackhawk":{type:"gas",mpg:14,tank:24.6,grade:"premium"}} },
+    "Compass":        { "2007-2010":{"FWD 4-cyl":{type:"gas",mpg:23,tank:13.6,grade:"regular"},"4WD":{type:"gas",mpg:20,tank:13.6,grade:"regular"}},
+                        "2011+":    {"Sport FWD":{type:"gas",mpg:27,tank:13.5,grade:"regular"},"Trailhawk 4WD":{type:"gas",mpg:24,tank:13.5,grade:"regular"}} },
+    "Gladiator":      { "2020+":{"Sport 4WD":{type:"gas",mpg:19,tank:22.0,grade:"regular"},"Rubicon 4WD":{type:"gas",mpg:18,tank:22.0,grade:"regular"}} }
+  },
+  "Kia": {
+    "Forte":      { "2010-2016":{"LX":{type:"gas",mpg:28,tank:13.7,grade:"regular"},"EX":{type:"gas",mpg:29,tank:13.7,grade:"regular"}},
+                    "2017+":    {"FE":{type:"gas",mpg:32,tank:13.2,grade:"regular"},"LX":{type:"gas",mpg:35,tank:13.2,grade:"regular"},"GT":{type:"gas",mpg:28,tank:13.2,grade:"regular"}} },
+    "K5 / Optima":{ "2001-2010":{"LX 4-cyl":{type:"gas",mpg:23,tank:17.2,grade:"regular"}},
+                    "2011-2020":{"LX":{type:"gas",mpg:26,tank:18.0,grade:"regular"},"SX Turbo":{type:"gas",mpg:25,tank:18.0,grade:"regular"}},
+                    "2021+":    {"LX FWD":{type:"gas",mpg:30,tank:15.4,grade:"regular"},"GT FWD":{type:"gas",mpg:27,tank:15.4,grade:"regular"}} },
+    "Sportage":   { "2005-2016":{"LX AWD":{type:"gas",mpg:21,tank:14.3,grade:"regular"},"SX AWD Turbo":{type:"gas",mpg:20,tank:14.3,grade:"regular"}},
+                    "2017+":    {"LX FWD":{type:"gas",mpg:30,tank:14.3,grade:"regular"},"SX AWD":{type:"gas",mpg:26,tank:14.3,grade:"regular"},"Hybrid FWD":{type:"gas",mpg:43,tank:14.3,grade:"regular"}} },
+    "Sorento":    { "2003-2015":{"LX FWD V6":{type:"gas",mpg:19,tank:19.7,grade:"regular"},"SX AWD":{type:"gas",mpg:17,tank:19.7,grade:"regular"}},
+                    "2016+":    {"LX FWD":{type:"gas",mpg:27,tank:18.8,grade:"regular"},"AWD":{type:"gas",mpg:25,tank:18.8,grade:"regular"},"Hybrid AWD":{type:"gas",mpg:35,tank:17.7,grade:"regular"}} },
+    "Telluride":  { "2020+":{"LX FWD":{type:"gas",mpg:20,tank:18.8,grade:"regular"},"AWD":{type:"gas",mpg:19,tank:18.8,grade:"regular"}} },
+    "EV6":        { "2022+":{"Light RWD":{type:"ev",range:310,efficiency:3.5,battery:77.4},"Wind AWD":{type:"ev",range:274,efficiency:3.1,battery:77.4},"GT AWD":{type:"ev",range:206,efficiency:2.8,battery:77.4}} },
+    "EV9":        { "2024+":{"Light RWD":{type:"ev",range:304,efficiency:2.9,battery:99.8},"GT-Line AWD":{type:"ev",range:270,efficiency:2.7,battery:99.8}} },
+    "Niro EV":    { "2019+":{"Wind":{type:"ev",range:239,efficiency:3.7,battery:64.8},"Wave":{type:"ev",range:253,efficiency:3.7,battery:64.8}} }
+  },
+  "Land Rover": {
+    "Range Rover":       { "2003-2012":{"HSE AWD V8":{type:"gas",mpg:13,tank:27.7,grade:"premium"},"Sport Supercharged":{type:"gas",mpg:12,tank:27.7,grade:"premium"}},
+                           "2013-2021":{"Base AWD V6":{type:"gas",mpg:17,tank:27.7,grade:"premium"},"HSE AWD V8":{type:"gas",mpg:14,tank:27.7,grade:"premium"}},
+                           "2022+":    {"SE AWD I6":{type:"gas",mpg:19,tank:27.7,grade:"premium"},"Autobiography V8":{type:"gas",mpg:15,tank:27.7,grade:"premium"}} },
+    "Range Rover Sport": { "2006-2013":{"V6 AWD":{type:"gas",mpg:15,tank:26.7,grade:"premium"},"Supercharged V8":{type:"gas",mpg:13,tank:26.7,grade:"premium"}},
+                           "2014+":    {"SE AWD V6":{type:"gas",mpg:18,tank:27.7,grade:"premium"},"HST V8":{type:"gas",mpg:15,tank:27.7,grade:"premium"}} },
+    "Defender":          { "2020+":{"90 P300 AWD":{type:"gas",mpg:19,tank:24.3,grade:"premium"},"110 P400 AWD":{type:"gas",mpg:18,tank:24.3,grade:"premium"}} },
+    "Discovery":         { "2017+":{"SE AWD V6":{type:"gas",mpg:17,tank:27.7,grade:"premium"},"HSE AWD":{type:"gas",mpg:17,tank:27.7,grade:"premium"}} }
+  },
+  "Lexus": {
+    "IS":  { "2001-2005":{"IS300 RWD":{type:"gas",mpg:21,tank:17.4,grade:"premium"}},
+             "2006-2013":{"IS250 RWD":{type:"gas",mpg:22,tank:17.4,grade:"premium"},"IS350 RWD":{type:"gas",mpg:20,tank:17.4,grade:"premium"}},
+             "2014+":    {"IS300 RWD":{type:"gas",mpg:22,tank:17.4,grade:"premium"},"IS500 RWD":{type:"gas",mpg:19,tank:17.4,grade:"premium"}} },
+    "ES":  { "2002-2006":{"ES330":{type:"gas",mpg:24,tank:18.0,grade:"regular"}},
+             "2007-2018":{"ES350":{type:"gas",mpg:24,tank:17.4,grade:"regular"}},
+             "2019+":    {"ES250 FWD":{type:"gas",mpg:28,tank:17.4,grade:"regular"},"ES300h Hybrid":{type:"gas",mpg:44,tank:13.2,grade:"regular"}} },
+    "RX":  { "2001-2009":{"RX330/350 AWD":{type:"gas",mpg:20,tank:19.2,grade:"regular"}},
+             "2010-2022":{"RX350 FWD":{type:"gas",mpg:24,tank:17.9,grade:"regular"},"RX350 AWD":{type:"gas",mpg:22,tank:17.9,grade:"regular"},"RX450h AWD":{type:"gas",mpg:31,tank:17.2,grade:"regular"}},
+             "2023+":    {"RX350 FWD":{type:"gas",mpg:25,tank:17.9,grade:"regular"},"RX500h AWD Hybrid":{type:"gas",mpg:36,tank:17.9,grade:"regular"}} },
+    "GX":  { "2003-2009":{"470 4WD":{type:"gas",mpg:15,tank:23.3,grade:"regular"}},
+             "2010+":    {"460 4WD":{type:"gas",mpg:16,tank:23.3,grade:"regular"}} },
+    "NX":  { "2015+":{"NX300 FWD":{type:"gas",mpg:28,tank:14.8,grade:"regular"},"NX350 AWD":{type:"gas",mpg:24,tank:14.8,grade:"regular"},"NX450h+ PHEV":{type:"gas",mpg:36,tank:11.3,grade:"regular"}} },
+    "RZ 450e":{ "2023+":{"Premium AWD":{type:"ev",range:220,efficiency:3.0,battery:71.4}} }
+  },
+  "Lincoln": {
+    "Navigator":  { "2003-2006":{"2WD":{type:"gas",mpg:12,tank:33.0,grade:"regular"},"4WD":{type:"gas",mpg:12,tank:33.0,grade:"regular"}},
+                    "2007-2014":{"2WD":{type:"gas",mpg:13,tank:33.0,grade:"regular"},"4WD":{type:"gas",mpg:12,tank:33.0,grade:"regular"}},
+                    "2015+":    {"2WD":{type:"gas",mpg:17,tank:28.0,grade:"regular"},"4WD":{type:"gas",mpg:16,tank:28.0,grade:"regular"}} },
+    "MKZ / Zephyr":{"2006-2012":{"FWD V6":{type:"gas",mpg:20,tank:17.5,grade:"regular"},"AWD V6":{type:"gas",mpg:18,tank:17.5,grade:"regular"}},
+                    "2013+":    {"2.0T FWD":{type:"gas",mpg:22,tank:16.5,grade:"regular"},"Hybrid FWD":{type:"gas",mpg:41,tank:13.6,grade:"regular"}} },
+    "Corsair":    { "2020+":{"Standard FWD":{type:"gas",mpg:26,tank:14.8,grade:"regular"},"Reserve AWD":{type:"gas",mpg:24,tank:14.8,grade:"regular"}} },
+    "Nautilus":   { "2019+":{"Standard FWD":{type:"gas",mpg:21,tank:18.0,grade:"regular"},"Reserve AWD":{type:"gas",mpg:19,tank:18.0,grade:"regular"}} }
+  },
+  "Lucid": {
+    "Air": { "2022+":{"Pure RWD":{type:"ev",range:410,efficiency:4.8,battery:88},"Touring RWD":{type:"ev",range:425,efficiency:4.9,battery:100},"Grand Touring AWD":{type:"ev",range:516,efficiency:5.0,battery:118},"Sapphire AWD":{type:"ev",range:427,efficiency:4.5,battery:118}} }
+  },
+  "Mazda": {
+    "Mazda3":  { "2004-2008":{"i 4-cyl":{type:"gas",mpg:26,tank:14.5,grade:"regular"},"s 2.3L":{type:"gas",mpg:24,tank:14.5,grade:"regular"}},
+                 "2009-2018":{"i FWD":{type:"gas",mpg:28,tank:14.5,grade:"regular"},"s Touring":{type:"gas",mpg:27,tank:14.5,grade:"regular"}},
+                 "2019+":    {"2.0L FWD":{type:"gas",mpg:32,tank:13.2,grade:"regular"},"2.5L AWD":{type:"gas",mpg:28,tank:13.2,grade:"regular"},"Turbo AWD":{type:"gas",mpg:25,tank:13.2,grade:"regular"}} },
+    "CX-5":    { "2013-2016":{"Sport FWD":{type:"gas",mpg:26,tank:15.3,grade:"regular"},"AWD":{type:"gas",mpg:25,tank:15.3,grade:"regular"}},
+                 "2017+":    {"2.5L FWD":{type:"gas",mpg:28,tank:15.3,grade:"regular"},"2.5L AWD":{type:"gas",mpg:27,tank:15.3,grade:"regular"},"Turbo AWD":{type:"gas",mpg:24,tank:15.3,grade:"regular"}} },
+    "CX-9":    { "2007-2015":{"Sport FWD":{type:"gas",mpg:17,tank:21.4,grade:"regular"},"AWD":{type:"gas",mpg:16,tank:21.4,grade:"regular"}},
+                 "2016+":    {"Sport FWD":{type:"gas",mpg:23,tank:19.5,grade:"regular"},"AWD":{type:"gas",mpg:22,tank:19.5,grade:"regular"}} },
+    "CX-50":   { "2023+":{"2.5L AWD":{type:"gas",mpg:28,tank:15.3,grade:"regular"},"Turbo AWD":{type:"gas",mpg:26,tank:15.3,grade:"regular"}} },
+    "Mazda6":  { "2003-2008":{"i 4-cyl":{type:"gas",mpg:24,tank:17.4,grade:"regular"},"s V6":{type:"gas",mpg:21,tank:17.4,grade:"regular"}},
+                 "2009+":    {"i FWD":{type:"gas",mpg:28,tank:16.4,grade:"regular"},"Grand Touring":{type:"gas",mpg:28,tank:16.4,grade:"regular"}} }
+  },
+  "Mercedes-Benz": {
+    "C-Class": { "2000-2007":{"C240 RWD":{type:"gas",mpg:21,tank:16.4,grade:"premium"},"C320 RWD":{type:"gas",mpg:18,tank:16.4,grade:"premium"}},
+                 "2008-2014":{"C300 RWD":{type:"gas",mpg:22,tank:17.4,grade:"premium"},"C350 RWD":{type:"gas",mpg:20,tank:17.4,grade:"premium"}},
+                 "2015+":    {"C300 RWD":{type:"gas",mpg:25,tank:16.1,grade:"premium"},"C300 4MATIC":{type:"gas",mpg:23,tank:16.1,grade:"premium"},"AMG C63":{type:"gas",mpg:19,tank:17.4,grade:"premium"}} },
+    "E-Class": { "2003-2009":{"E320 RWD":{type:"gas",mpg:21,tank:21.1,grade:"premium"},"E500 RWD":{type:"gas",mpg:17,tank:21.1,grade:"premium"}},
+                 "2010-2016":{"E350 RWD":{type:"gas",mpg:22,tank:17.4,grade:"premium"},"E550 RWD":{type:"gas",mpg:18,tank:17.4,grade:"premium"}},
+                 "2017+":    {"E350 RWD":{type:"gas",mpg:24,tank:17.4,grade:"premium"},"E450 4MATIC":{type:"gas",mpg:22,tank:17.4,grade:"premium"}} },
+    "GLC":     { "2016+":{"300 RWD":{type:"gas",mpg:25,tank:17.4,grade:"premium"},"300 4MATIC":{type:"gas",mpg:23,tank:17.4,grade:"premium"},"AMG 43 4MATIC":{type:"gas",mpg:21,tank:17.4,grade:"premium"}} },
+    "GLE":     { "2016+":{"350 4MATIC":{type:"gas",mpg:20,tank:21.1,grade:"premium"},"450 4MATIC":{type:"gas",mpg:22,tank:21.1,grade:"premium"},"AMG 63 S":{type:"gas",mpg:16,tank:21.1,grade:"premium"}} },
+    "GLS":     { "2017+":{"450 4MATIC":{type:"gas",mpg:19,tank:26.4,grade:"premium"},"600 4MATIC":{type:"gas",mpg:17,tank:26.4,grade:"premium"}} },
+    "EQS":     { "2022+":{"450 RWD":{type:"ev",range:350,efficiency:3.2,battery:107.8},"580 4MATIC":{type:"ev",range:305,efficiency:2.9,battery:107.8}} },
+    "EQE":     { "2023+":{"350 RWD":{type:"ev",range:350,efficiency:3.4,battery:90.6},"350+ RWD":{type:"ev",range:394,efficiency:3.5,battery:90.6}} },
+    "EQB":     { "2023+":{"250 RWD":{type:"ev",range:245,efficiency:3.0,battery:66.5}} }
+  },
+  "Mini": {
+    "Cooper":    { "2002-2006":{"Base":{type:"gas",mpg:28,tank:13.2,grade:"premium"},"S Turbo":{type:"gas",mpg:25,tank:13.2,grade:"premium"}},
+                   "2007-2013":{"Base":{type:"gas",mpg:29,tank:13.2,grade:"premium"},"S Turbo":{type:"gas",mpg:27,tank:13.2,grade:"premium"},"JCW":{type:"gas",mpg:25,tank:13.2,grade:"premium"}},
+                   "2014+":    {"Base 3-door":{type:"gas",mpg:30,tank:11.6,grade:"premium"},"S Turbo":{type:"gas",mpg:28,tank:11.6,grade:"premium"},"SE EV":{type:"ev",range:114,efficiency:3.5,battery:32.6}} },
+    "Countryman":{ "2011-2016":{"Base FWD":{type:"gas",mpg:27,tank:15.6,grade:"premium"},"S AWD":{type:"gas",mpg:25,tank:15.6,grade:"premium"}},
+                   "2017+":    {"Base FWD":{type:"gas",mpg:26,tank:15.6,grade:"premium"},"S AWD":{type:"gas",mpg:25,tank:15.6,grade:"premium"},"SE EV":{type:"ev",range:212,efficiency:3.3,battery:66.5}} }
+  },
+  "Mitsubishi": {
+    "Outlander":      { "2003-2006":{"LS AWD":{type:"gas",mpg:21,tank:16.6,grade:"regular"}},
+                        "2007-2021":{"ES FWD":{type:"gas",mpg:25,tank:16.6,grade:"regular"},"GT AWD":{type:"gas",mpg:23,tank:16.6,grade:"regular"}},
+                        "2022+":    {"ES FWD":{type:"gas",mpg:25,tank:16.6,grade:"regular"},"SE AWD":{type:"gas",mpg:24,tank:16.6,grade:"regular"},"PHEV AWD":{type:"gas",mpg:26,tank:11.8,grade:"regular"}} },
+    "Eclipse Cross":  { "2018+":{"ES FWD":{type:"gas",mpg:26,tank:14.8,grade:"regular"},"SE AWD":{type:"gas",mpg:24,tank:14.8,grade:"regular"}} },
+    "Galant":         { "2004-2012":{"ES":{type:"gas",mpg:23,tank:18.5,grade:"regular"},"Ralliart":{type:"gas",mpg:20,tank:18.5,grade:"regular"}} },
+    "Lancer":         { "2002-2007":{"ES":{type:"gas",mpg:27,tank:13.2,grade:"regular"}},
+                        "2008+":    {"ES":{type:"gas",mpg:27,tank:13.2,grade:"regular"},"Ralliart AWD":{type:"gas",mpg:23,tank:13.2,grade:"regular"},"Evolution AWD":{type:"gas",mpg:21,tank:13.2,grade:"premium"}} }
+  },
+  "Nissan": {
+    "Altima":    { "2002-2006":{"2.5 S":{type:"gas",mpg:27,tank:20.0,grade:"regular"},"3.5 SE V6":{type:"gas",mpg:23,tank:20.0,grade:"regular"}},
+                   "2007-2018":{"2.5 S":{type:"gas",mpg:28,tank:18.0,grade:"regular"},"3.5 SR V6":{type:"gas",mpg:23,tank:18.0,grade:"regular"}},
+                   "2019+":    {"S FWD":{type:"gas",mpg:32,tank:16.2,grade:"regular"},"SV FWD":{type:"gas",mpg:32,tank:16.2,grade:"regular"},"SR AWD":{type:"gas",mpg:27,tank:16.2,grade:"regular"}} },
+    "Rogue":     { "2008-2020":{"S FWD":{type:"gas",mpg:25,tank:15.9,grade:"regular"},"SV AWD":{type:"gas",mpg:24,tank:15.9,grade:"regular"}},
+                   "2021+":    {"S FWD":{type:"gas",mpg:30,tank:14.5,grade:"regular"},"SV AWD":{type:"gas",mpg:28,tank:14.5,grade:"regular"}} },
+    "Pathfinder":{ "2001-2012":{"4WD V6":{type:"gas",mpg:16,tank:21.1,grade:"regular"}},
+                   "2013-2021":{"S 2WD":{type:"gas",mpg:20,tank:19.5,grade:"regular"},"SV 4WD":{type:"gas",mpg:18,tank:19.5,grade:"regular"}},
+                   "2022+":    {"S 2WD":{type:"gas",mpg:21,tank:19.5,grade:"regular"},"SV 4WD":{type:"gas",mpg:19,tank:19.5,grade:"regular"}} },
+    "Frontier":  { "2000-2021":{"S 2WD 4-cyl":{type:"gas",mpg:20,tank:21.0,grade:"regular"},"SV 4WD V6":{type:"gas",mpg:17,tank:21.0,grade:"regular"}},
+                   "2022+":    {"S 2WD":{type:"gas",mpg:21,tank:21.0,grade:"regular"},"SV 4WD":{type:"gas",mpg:18,tank:21.0,grade:"regular"}} },
+    "Titan":     { "2004-2015":{"2WD V8":{type:"gas",mpg:15,tank:28.0,grade:"regular"},"4WD V8":{type:"gas",mpg:14,tank:28.0,grade:"regular"}},
+                   "2016+":    {"S 2WD":{type:"gas",mpg:18,tank:26.0,grade:"regular"},"SV 4WD":{type:"gas",mpg:16,tank:26.0,grade:"regular"}} },
+    "Murano":    { "2003-2014":{"FWD":{type:"gas",mpg:21,tank:21.7,grade:"regular"},"AWD":{type:"gas",mpg:20,tank:21.7,grade:"regular"}},
+                   "2015+":    {"FWD":{type:"gas",mpg:22,tank:18.0,grade:"regular"},"AWD":{type:"gas",mpg:21,tank:18.0,grade:"regular"}} },
+    "Leaf":      { "2011-2017":{"S 24 kWh":{type:"ev",range:84,efficiency:3.0,battery:24},"SV 30 kWh":{type:"ev",range:107,efficiency:3.3,battery:30}},
+                   "2018+":    {"S 40 kWh":{type:"ev",range:149,efficiency:3.4,battery:40},"SV Plus 62 kWh":{type:"ev",range:212,efficiency:3.2,battery:62}} },
+    "Ariya":     { "2023+":{"Engage FWD":{type:"ev",range:304,efficiency:3.3,battery:87},"Engage+ AWD":{type:"ev",range:265,efficiency:3.0,battery:87}} }
+  },
+  "Polestar": {
+    "Polestar 2": { "2021+":{"Long Range RWD":{type:"ev",range:270,efficiency:3.3,battery:78},"Long Range AWD":{type:"ev",range:249,efficiency:3.1,battery:78},"Performance AWD":{type:"ev",range:243,efficiency:3.0,battery:78}} },
+    "Polestar 3": { "2024+":{"Long Range AWD":{type:"ev",range:315,efficiency:2.9,battery:111}} }
+  },
+  "Pontiac": {
+    "Grand Prix": { "2000-2003":{"GT":{type:"gas",mpg:20,tank:17.0,grade:"regular"},"GTP Supercharged":{type:"gas",mpg:18,tank:17.0,grade:"regular"}},
+                    "2004-2008":{"GT":{type:"gas",mpg:22,tank:17.0,grade:"regular"},"GXP V8":{type:"gas",mpg:18,tank:17.0,grade:"regular"}} },
+    "G6":         { "2005-2010":{"Base":{type:"gas",mpg:22,tank:16.0,grade:"regular"},"GT":{type:"gas",mpg:22,tank:16.0,grade:"regular"},"GXP V6":{type:"gas",mpg:20,tank:16.0,grade:"regular"}} },
+    "Vibe":       { "2003-2010":{"Base FWD":{type:"gas",mpg:28,tank:13.2,grade:"regular"},"GT AWD":{type:"gas",mpg:26,tank:13.2,grade:"regular"}} },
+    "Bonneville": { "2000-2005":{"SE":{type:"gas",mpg:20,tank:18.0,grade:"regular"},"SSEi Supercharged":{type:"gas",mpg:18,tank:18.0,grade:"regular"}} }
+  },
+  "Porsche": {
+    "911":     { "1999-2004":{"Carrera RWD":{type:"gas",mpg:18,tank:16.9,grade:"premium"},"Turbo AWD":{type:"gas",mpg:15,tank:16.9,grade:"premium"}},
+                 "2005-2011":{"Carrera RWD":{type:"gas",mpg:19,tank:16.9,grade:"premium"},"Carrera S":{type:"gas",mpg:17,tank:16.9,grade:"premium"}},
+                 "2012+":    {"Carrera":{type:"gas",mpg:20,tank:16.9,grade:"premium"},"S":{type:"gas",mpg:18,tank:16.9,grade:"premium"},"GT3":{type:"gas",mpg:15,tank:16.9,grade:"premium"}} },
+    "Cayenne": { "2003-2006":{"V6 AWD":{type:"gas",mpg:15,tank:26.4,grade:"premium"},"S V8":{type:"gas",mpg:13,tank:26.4,grade:"premium"}},
+                 "2007-2010":{"V6 AWD":{type:"gas",mpg:15,tank:26.4,grade:"premium"},"S V8":{type:"gas",mpg:13,tank:26.4,grade:"premium"}},
+                 "2011+":    {"Base":{type:"gas",mpg:19,tank:26.4,grade:"premium"},"S":{type:"gas",mpg:18,tank:26.4,grade:"premium"},"Turbo":{type:"gas",mpg:16,tank:26.4,grade:"premium"}} },
+    "Macan":   { "2015-2022":{"Base":{type:"gas",mpg:22,tank:17.7,grade:"premium"},"S":{type:"gas",mpg:20,tank:17.7,grade:"premium"}},
+                 "2024+":    {"4 AWD EV":{type:"ev",range:308,efficiency:3.2,battery:100},"Turbo AWD EV":{type:"ev",range:288,efficiency:3.0,battery:100}} },
+    "Taycan":  { "2020+":{"RWD":{type:"ev",range:246,efficiency:2.8,battery:93.4},"4S AWD":{type:"ev",range:227,efficiency:2.7,battery:93.4},"Turbo":{type:"ev",range:246,efficiency:2.8,battery:93.4}} }
+  },
+  "Ram": {
+    "1500":      { "2002-2008":{"V6 2WD":{type:"gas",mpg:15,tank:26.0,grade:"regular"},"V8 5.7 2WD":{type:"gas",mpg:14,tank:26.0,grade:"regular"}},
+                   "2009-2018":{"V6 2WD":{type:"gas",mpg:17,tank:26.0,grade:"regular"},"V8 5.7 2WD":{type:"gas",mpg:15,tank:26.0,grade:"regular"},"EcoDiesel 2WD":{type:"gas",mpg:25,tank:26.0,grade:"regular"}},
+                   "2019+":    {"V6 2WD":{type:"gas",mpg:20,tank:26.0,grade:"regular"},"V8 eTorque 2WD":{type:"gas",mpg:18,tank:26.0,grade:"regular"},"EcoDiesel 2WD":{type:"gas",mpg:26,tank:33.0,grade:"regular"},"TRX V8":{type:"gas",mpg:11,tank:33.0,grade:"regular"}} },
+    "2500":      { "2003+":{"Gas V8 2WD":{type:"gas",mpg:14,tank:34.0,grade:"regular"},"Diesel 2WD":{type:"gas",mpg:20,tank:33.0,grade:"regular"}} },
+    "1500 REV":  { "2025+":{"AWD":{type:"ev",range:350,efficiency:2.2,battery:229}} }
+  },
+  "Rivian": {
+    "R1T": { "2022+":{"Dual-Motor AWD":{type:"ev",range:314,efficiency:2.5,battery:135},"Quad-Motor AWD":{type:"ev",range:314,efficiency:2.5,battery:135}} },
+    "R1S": { "2022+":{"Dual-Motor AWD":{type:"ev",range:321,efficiency:2.6,battery:135}} },
+    "R2":  { "2025+":{"RWD":{type:"ev",range:300,efficiency:3.0,battery:82},"AWD":{type:"ev",range:288,efficiency:2.9,battery:82}} }
+  },
+  "Saturn": {
+    "Vue": { "2002-2007":{"FWD 4-cyl":{type:"gas",mpg:22,tank:16.0,grade:"regular"},"AWD V6":{type:"gas",mpg:18,tank:16.0,grade:"regular"}},
+             "2008-2010":{"XE FWD":{type:"gas",mpg:24,tank:16.6,grade:"regular"},"Hybrid FWD":{type:"gas",mpg:25,tank:16.6,grade:"regular"}} },
+    "Ion": { "2003-2007":{"Base":{type:"gas",mpg:26,tank:13.0,grade:"regular"},"Red Line":{type:"gas",mpg:25,tank:13.0,grade:"regular"}} },
+    "Aura":{ "2007-2010":{"XE":{type:"gas",mpg:24,tank:16.0,grade:"regular"},"XR V6":{type:"gas",mpg:22,tank:16.0,grade:"regular"}} }
+  },
+  "Subaru": {
+    "Outback":   { "2000-2004":{"Base AWD":{type:"gas",mpg:23,tank:15.9,grade:"regular"},"H6-3.0 AWD":{type:"gas",mpg:20,tank:15.9,grade:"regular"}},
+                   "2005-2009":{"Base AWD":{type:"gas",mpg:24,tank:15.9,grade:"regular"},"XT Turbo":{type:"gas",mpg:22,tank:15.9,grade:"regular"}},
+                   "2010-2014":{"2.5i AWD":{type:"gas",mpg:25,tank:18.5,grade:"regular"},"3.6R AWD":{type:"gas",mpg:22,tank:18.5,grade:"regular"}},
+                   "2015+":    {"Base AWD":{type:"gas",mpg:29,tank:18.5,grade:"regular"},"Limited AWD":{type:"gas",mpg:30,tank:18.5,grade:"regular"},"Wilderness AWD":{type:"gas",mpg:24,tank:18.5,grade:"regular"}} },
+    "Forester":  { "2000-2008":{"Base AWD":{type:"gas",mpg:23,tank:15.9,grade:"regular"},"XT Turbo":{type:"gas",mpg:21,tank:15.9,grade:"premium"}},
+                   "2009-2013":{"Base AWD":{type:"gas",mpg:24,tank:15.9,grade:"regular"},"XT AWD":{type:"gas",mpg:22,tank:15.9,grade:"premium"}},
+                   "2014+":    {"Base AWD":{type:"gas",mpg:29,tank:16.6,grade:"regular"},"Wilderness AWD":{type:"gas",mpg:26,tank:16.6,grade:"regular"}} },
+    "Crosstrek": { "2013-2017":{"Base AWD":{type:"gas",mpg:27,tank:15.9,grade:"regular"}},
+                   "2018+":    {"Base AWD":{type:"gas",mpg:29,tank:15.9,grade:"regular"},"Sport AWD":{type:"gas",mpg:29,tank:15.9,grade:"regular"},"Plug-In Hybrid":{type:"gas",mpg:35,tank:13.2,grade:"regular"}} },
+    "Impreza":   { "2000-2007":{"Base AWD":{type:"gas",mpg:25,tank:13.2,grade:"regular"},"WRX AWD":{type:"gas",mpg:21,tank:13.2,grade:"premium"},"STI AWD":{type:"gas",mpg:18,tank:15.9,grade:"premium"}},
+                   "2008+":    {"Base AWD":{type:"gas",mpg:28,tank:13.2,grade:"regular"},"Sport AWD":{type:"gas",mpg:28,tank:13.2,grade:"regular"}} },
+    "Ascent":    { "2019+":{"Base AWD":{type:"gas",mpg:21,tank:19.0,grade:"regular"},"Touring AWD":{type:"gas",mpg:22,tank:19.0,grade:"regular"}} },
+    "Solterra":  { "2023+":{"Premium AWD":{type:"ev",range:227,efficiency:3.0,battery:71.4}} }
+  },
+  "Tesla": {
+    "Model 3": { "2017-2020":{"Standard Range RWD":{type:"ev",range:220,efficiency:3.6,battery:54},"Long Range AWD":{type:"ev",range:322,efficiency:3.9,battery:82},"Performance AWD":{type:"ev",range:299,efficiency:3.6,battery:82}},
+                 "2021+":    {"RWD":{type:"ev",range:272,efficiency:3.8,battery:57.5},"Long Range AWD":{type:"ev",range:358,efficiency:4.0,battery:82},"Performance AWD":{type:"ev",range:315,efficiency:3.7,battery:82}} },
+    "Model Y": { "2020-2022":{"Long Range AWD":{type:"ev",range:330,efficiency:3.7,battery:82},"Performance AWD":{type:"ev",range:303,efficiency:3.5,battery:82}},
+                 "2023+":    {"RWD":{type:"ev",range:260,efficiency:3.5,battery:57.5},"Long Range AWD":{type:"ev",range:330,efficiency:3.7,battery:82},"Performance AWD":{type:"ev",range:303,efficiency:3.5,battery:82}} },
+    "Model S": { "2012-2015":{"60 RWD":{type:"ev",range:208,efficiency:3.1,battery:60},"85 RWD":{type:"ev",range:265,efficiency:3.2,battery:85},"P85D AWD":{type:"ev",range:253,efficiency:3.1,battery:85}},
+                 "2016-2019":{"75D AWD":{type:"ev",range:259,efficiency:3.2,battery:75},"100D AWD":{type:"ev",range:335,efficiency:3.4,battery:100},"P100D AWD":{type:"ev",range:315,efficiency:3.2,battery:100}},
+                 "2020+":    {"Long Range AWD":{type:"ev",range:405,efficiency:3.5,battery:100},"Plaid AWD":{type:"ev",range:396,efficiency:3.4,battery:100}} },
+    "Model X": { "2016-2019":{"75D AWD":{type:"ev",range:237,efficiency:2.8,battery:75},"100D AWD":{type:"ev",range:295,efficiency:2.9,battery:100}},
+                 "2020+":    {"Long Range AWD":{type:"ev",range:348,efficiency:2.9,battery:100},"Plaid AWD":{type:"ev",range:333,efficiency:2.8,battery:100}} },
+    "Cybertruck":{"2024+":{"RWD":{type:"ev",range:250,efficiency:2.8,battery:123},"AWD":{type:"ev",range:340,efficiency:2.6,battery:123},"Cyberbeast AWD":{type:"ev",range:320,efficiency:2.5,battery:123}} }
+  },
+  "Toyota": {
+    "Camry":      { "2002-2006":{"LE 4-cyl":{type:"gas",mpg:26,tank:18.5,grade:"regular"},"XLE V6":{type:"gas",mpg:22,tank:18.5,grade:"regular"}},
+                    "2007-2011":{"LE 4-cyl":{type:"gas",mpg:26,tank:18.5,grade:"regular"},"SE V6":{type:"gas",mpg:22,tank:18.5,grade:"regular"}},
+                    "2012-2017":{"LE 4-cyl":{type:"gas",mpg:28,tank:17.2,grade:"regular"},"XLE V6":{type:"gas",mpg:25,tank:17.2,grade:"regular"}},
+                    "2018+":    {"LE FWD":{type:"gas",mpg:32,tank:15.8,grade:"regular"},"XSE AWD":{type:"gas",mpg:29,tank:15.8,grade:"regular"},"TRD":{type:"gas",mpg:28,tank:15.8,grade:"regular"},"Hybrid LE":{type:"gas",mpg:51,tank:13.2,grade:"regular"}} },
+    "Corolla":    { "2000-2002":{"CE":{type:"gas",mpg:29,tank:13.2,grade:"regular"},"LE":{type:"gas",mpg:29,tank:13.2,grade:"regular"}},
+                    "2003-2013":{"CE":{type:"gas",mpg:30,tank:13.2,grade:"regular"},"S":{type:"gas",mpg:30,tank:13.2,grade:"regular"}},
+                    "2014+":    {"L":{type:"gas",mpg:32,tank:13.2,grade:"regular"},"LE":{type:"gas",mpg:34,tank:13.2,grade:"regular"},"Hybrid LE":{type:"gas",mpg:52,tank:11.3,grade:"regular"}} },
+    "RAV4":       { "2001-2005":{"Base FWD":{type:"gas",mpg:24,tank:15.3,grade:"regular"},"4WD":{type:"gas",mpg:22,tank:15.3,grade:"regular"}},
+                    "2006-2018":{"Base FWD":{type:"gas",mpg:25,tank:15.9,grade:"regular"},"AWD V6":{type:"gas",mpg:22,tank:15.9,grade:"regular"}},
+                    "2019+":    {"LE FWD":{type:"gas",mpg:30,tank:14.5,grade:"regular"},"XLE AWD":{type:"gas",mpg:28,tank:14.5,grade:"regular"},"Hybrid AWD":{type:"gas",mpg:38,tank:14.5,grade:"regular"},"Prime AWD PHEV":{type:"gas",mpg:42,tank:14.5,grade:"regular"}} },
+    "4Runner":    { "2003-2009":{"SR5 4WD V6":{type:"gas",mpg:17,tank:23.0,grade:"regular"}},
+                    "2010+":    {"SR5 4WD":{type:"gas",mpg:17,tank:23.0,grade:"regular"},"TRD Off-Road":{type:"gas",mpg:16,tank:23.0,grade:"regular"},"TRD Pro":{type:"gas",mpg:16,tank:23.0,grade:"regular"}} },
+    "Tacoma":     { "2001-2004":{"2WD 4-cyl":{type:"gas",mpg:22,tank:18.0,grade:"regular"},"4WD V6":{type:"gas",mpg:17,tank:18.0,grade:"regular"}},
+                    "2005-2015":{"SR 2WD 4-cyl":{type:"gas",mpg:21,tank:21.1,grade:"regular"},"SR5 4WD V6":{type:"gas",mpg:18,tank:21.1,grade:"regular"}},
+                    "2016+":    {"SR 2WD":{type:"gas",mpg:23,tank:21.1,grade:"regular"},"SR5 4WD":{type:"gas",mpg:20,tank:21.1,grade:"regular"},"TRD Off-Road 4WD":{type:"gas",mpg:19,tank:21.1,grade:"regular"}} },
+    "Tundra":     { "2000-2006":{"V6 2WD":{type:"gas",mpg:16,tank:26.4,grade:"regular"},"V8 2WD":{type:"gas",mpg:15,tank:26.4,grade:"regular"}},
+                    "2007-2021":{"V6 2WD":{type:"gas",mpg:17,tank:26.4,grade:"regular"},"V8 2WD":{type:"gas",mpg:15,tank:26.4,grade:"regular"},"V8 4WD":{type:"gas",mpg:14,tank:26.4,grade:"regular"}},
+                    "2022+":    {"V6 Twin-Turbo 2WD":{type:"gas",mpg:18,tank:22.5,grade:"regular"},"iForce MAX Hybrid":{type:"gas",mpg:20,tank:32.2,grade:"regular"}} },
+    "Highlander": { "2001-2007":{"2WD V6":{type:"gas",mpg:19,tank:19.2,grade:"regular"},"4WD V6":{type:"gas",mpg:18,tank:19.2,grade:"regular"}},
+                    "2008-2019":{"Base FWD":{type:"gas",mpg:20,tank:19.2,grade:"regular"},"AWD V6":{type:"gas",mpg:19,tank:19.2,grade:"regular"},"Hybrid AWD":{type:"gas",mpg:28,tank:17.1,grade:"regular"}},
+                    "2020+":    {"L FWD":{type:"gas",mpg:23,tank:17.9,grade:"regular"},"XLE AWD":{type:"gas",mpg:21,tank:17.9,grade:"regular"},"Hybrid AWD":{type:"gas",mpg:36,tank:17.1,grade:"regular"}} },
+    "Sienna":     { "2004-2020":{"CE FWD":{type:"gas",mpg:19,tank:20.0,grade:"regular"},"AWD":{type:"gas",mpg:17,tank:20.0,grade:"regular"}},
+                    "2021+":    {"LE Hybrid AWD":{type:"gas",mpg:36,tank:18.0,grade:"regular"},"XSE Hybrid AWD":{type:"gas",mpg:35,tank:18.0,grade:"regular"}} },
+    "Prius":      { "2001-2009":{"Base Hybrid FWD":{type:"gas",mpg:46,tank:11.9,grade:"regular"}},
+                    "2010-2015":{"Two Hybrid FWD":{type:"gas",mpg:51,tank:11.3,grade:"regular"},"Three Hybrid FWD":{type:"gas",mpg:51,tank:11.3,grade:"regular"}},
+                    "2016+":    {"L Eco FWD":{type:"gas",mpg:56,tank:11.3,grade:"regular"},"XLE AWD-e":{type:"gas",mpg:50,tank:11.3,grade:"regular"}} },
+    "bZ4X":       { "2023+":{"XLE FWD":{type:"ev",range:252,efficiency:3.0,battery:71.4},"XLE AWD":{type:"ev",range:228,efficiency:2.8,battery:71.4}} }
+  },
+  "Volkswagen": {
+    "Golf / GTI": { "2000-2006":{"GL":{type:"gas",mpg:24,tank:14.5,grade:"regular"},"GTI 1.8T":{type:"gas",mpg:24,tank:14.5,grade:"regular"},"TDI Diesel":{type:"gas",mpg:38,tank:14.5,grade:"regular"}},
+                    "2007-2014":{"Base":{type:"gas",mpg:25,tank:14.5,grade:"regular"},"GTI 2.0T":{type:"gas",mpg:26,tank:14.5,grade:"premium"},"TDI":{type:"gas",mpg:42,tank:14.5,grade:"regular"}},
+                    "2015+":    {"GTI S":{type:"gas",mpg:28,tank:13.2,grade:"premium"},"GTI SE":{type:"gas",mpg:28,tank:13.2,grade:"premium"},"R AWD":{type:"gas",mpg:25,tank:13.2,grade:"premium"}} },
+    "Jetta":      { "2000-2005":{"2.0L":{type:"gas",mpg:24,tank:14.5,grade:"regular"},"1.8T":{type:"gas",mpg:26,tank:14.5,grade:"regular"},"TDI":{type:"gas",mpg:38,tank:14.5,grade:"regular"}},
+                    "2006-2018":{"2.5":{type:"gas",mpg:25,tank:14.5,grade:"regular"},"2.0T":{type:"gas",mpg:28,tank:14.5,grade:"regular"},"GLI":{type:"gas",mpg:26,tank:14.5,grade:"premium"}},
+                    "2019+":    {"S":{type:"gas",mpg:30,tank:13.2,grade:"regular"},"SE":{type:"gas",mpg:34,tank:13.2,grade:"regular"},"GLI":{type:"gas",mpg:29,tank:13.2,grade:"premium"}} },
+    "Passat":     { "2006-2011":{"2.5 FWD":{type:"gas",mpg:22,tank:18.5,grade:"regular"},"3.6 4Motion":{type:"gas",mpg:19,tank:18.5,grade:"regular"}},
+                    "2012+":    {"2.5 FWD":{type:"gas",mpg:25,tank:18.5,grade:"regular"},"TDI FWD":{type:"gas",mpg:43,tank:18.5,grade:"regular"}} },
+    "Tiguan":     { "2009-2017":{"S AWD":{type:"gas",mpg:19,tank:19.5,grade:"regular"}},
+                    "2018+":    {"S FWD":{type:"gas",mpg:24,tank:15.9,grade:"regular"},"SEL 4Motion":{type:"gas",mpg:22,tank:15.9,grade:"regular"}} },
+    "Atlas":      { "2018+":{"2.0T FWD":{type:"gas",mpg:22,tank:18.6,grade:"regular"},"V6 4Motion":{type:"gas",mpg:19,tank:18.6,grade:"regular"}} },
+    "ID.4":       { "2021+":{"Standard Plus RWD":{type:"ev",range:209,efficiency:2.8,battery:62},"Pro RWD":{type:"ev",range:275,efficiency:3.1,battery:82},"Pro S Plus AWD":{type:"ev",range:255,efficiency:2.9,battery:82}} },
+    "ID.Buzz":    { "2024+":{"Pro RWD":{type:"ev",range:234,efficiency:2.9,battery:82}} }
+  },
+  "Volvo": {
+    "XC40":          { "2019-2022":{"T4 FWD":{type:"gas",mpg:26,tank:14.9,grade:"premium"},"T5 AWD":{type:"gas",mpg:24,tank:14.9,grade:"premium"}},
+                       "2023+":    {"B5 AWD":{type:"gas",mpg:27,tank:14.9,grade:"premium"}} },
+    "XC60":          { "2010-2017":{"T6 AWD":{type:"gas",mpg:20,tank:18.8,grade:"premium"}},
+                       "2018+":    {"B5 AWD":{type:"gas",mpg:26,tank:18.8,grade:"premium"},"T8 PHEV AWD":{type:"gas",mpg:35,tank:15.9,grade:"premium"}} },
+    "XC90":          { "2003-2014":{"AWD V6":{type:"gas",mpg:16,tank:21.7,grade:"premium"},"AWD V8":{type:"gas",mpg:14,tank:21.7,grade:"premium"}},
+                       "2016+":    {"B6 AWD":{type:"gas",mpg:23,tank:18.8,grade:"premium"},"T8 PHEV AWD":{type:"gas",mpg:35,tank:18.8,grade:"premium"}} },
+    "S60":           { "2011-2018":{"T5 FWD":{type:"gas",mpg:25,tank:15.9,grade:"premium"},"T6 AWD":{type:"gas",mpg:23,tank:15.9,grade:"premium"}},
+                       "2019+":    {"B5 FWD":{type:"gas",mpg:28,tank:15.9,grade:"premium"},"T8 PHEV AWD":{type:"gas",mpg:35,tank:12.7,grade:"premium"}} },
+    "XC40 Recharge": { "2021+":{"Twin Motor AWD":{type:"ev",range:223,efficiency:2.9,battery:78}} },
+    "C40 Recharge":  { "2022+":{"Twin Motor AWD":{type:"ev",range:226,efficiency:2.9,battery:78}} },
+    "EX30":          { "2024+":{"Single Motor RWD":{type:"ev",range:275,efficiency:3.5,battery:69},"Twin Motor AWD":{type:"ev",range:265,efficiency:3.3,battery:69}} },
+    "EX90":          { "2025+":{"Twin Motor AWD":{type:"ev",range:300,efficiency:2.8,battery:111}} }
+  }
+};
+
+const YEARS = Array.from({length:26},(_,i)=>(2025-i).toString());
+const GRADE_LABELS = { regular:"Regular", midgrade:"Mid-Grade", premium:"Premium" };
+const SEASON_DEFAULTS = {
+  "Winter (Dec-Feb)":{tempF:30,weather:"Rain/Snow"},
+  "Spring (Mar-May)":{tempF:58,weather:"Clear"},
+  "Summer (Jun-Aug)":{tempF:82,weather:"Clear"},
+  "Fall (Sep-Nov)":  {tempF:52,weather:"Clear"},
+};
+const SEASONS = Object.keys(SEASON_DEFAULTS);
+const WEATHER_OPTIONS = ["Clear","Rain/Snow","Strong Headwind","Tailwind"];
+const TRAFFIC_OPTIONS = ["Light","Moderate","Heavy"];
+
+// ── Era matching ──────────────────────────────────────────────────────────────
+function findEra(make, model, year) {
+  if (!make || !model || !DB[make] || !DB[make][model]) return "";
+  const y = parseInt(year);
+  const eras = Object.keys(DB[make][model]);
+  for (const e of eras) {
+    const [lo, hi] = e.split("-");
+    const hiNum = hi === "+" ? 9999 : parseInt(hi);
+    if (y >= parseInt(lo) && y <= hiNum) return e;
+  }
+  return eras[eras.length - 1] || "";
+}
+
+// ── Efficiency math ───────────────────────────────────────────────────────────
+function evMult({tempF, terrain, traffic, weather}) {
+  let m = 1.0, factors = [];
+  const t = parseFloat(tempF);
+  if (!isNaN(t)) {
+    if (t < 20)      { m *= 0.60; factors.push("Extreme cold (<20°F): -40% range"); }
+    else if (t < 32) { m *= 0.72; factors.push("Freezing (20-32°F): -28% range"); }
+    else if (t < 45) { m *= 0.85; factors.push("Cold (32-45°F): -15% range"); }
+    else if (t > 95) { m *= 0.88; factors.push("Extreme heat (>95°F): -12% range"); }
+    else if (t > 80) { m *= 0.93; factors.push("High heat (80-95°F): -7% range"); }
+  }
+  if (terrain === "Hilly")       { m *= 0.88; factors.push("Hilly terrain: -12%"); }
+  else if (terrain === "Mountainous") { m *= 0.78; factors.push("Mountain terrain: -22%"); }
+  if (traffic === "Heavy")       { m *= 0.92; factors.push("Heavy traffic: -8%"); }
+  else if (traffic === "Light")  { m *= 1.02; factors.push("Light traffic: +2%"); }
+  if (weather === "Rain/Snow")   { m *= 0.90; factors.push("Rain/Snow: -10%"); }
+  else if (weather === "Strong Headwind") { m *= 0.84; factors.push("Headwind: -16%"); }
+  else if (weather === "Tailwind") { m *= 1.06; factors.push("Tailwind: +6%"); }
+  return { mult: Math.min(m, 1.10), factors };
+}
+
+function gasMult({terrain, traffic, weather}) {
+  let m = 1.0, factors = [];
+  if (terrain === "Hilly")       { m *= 0.88; factors.push("Hilly terrain: -12% MPG"); }
+  else if (terrain === "Mountainous") { m *= 0.78; factors.push("Mountain terrain: -22% MPG"); }
+  if (traffic === "Heavy")       { m *= 0.72; factors.push("Heavy traffic: -28% MPG"); }
+  else if (traffic === "Moderate") { m *= 0.88; factors.push("Moderate traffic: -12% MPG"); }
+  if (weather === "Strong Headwind") { m *= 0.90; factors.push("Headwind: -10%"); }
+  else if (weather === "Rain/Snow")  { m *= 0.94; factors.push("Rain/Snow: -6%"); }
+  else if (weather === "Tailwind")   { m *= 1.04; factors.push("Tailwind: +4%"); }
+  return { mult: m, factors };
+}
+
+function gasPrice(zip, grade) {
+  const p = parseInt((zip||"50000").substring(0,3));
+  let r,m,pr,src;
+  if(p>=900&&p<=961){r=4.65;m=4.88;pr=5.10;src="CA avg";}
+  else if(p>=970&&p<=979){r=4.20;m=4.43;pr=4.65;src="OR/WA avg";}
+  else if(p>=100&&p<=149){r=3.95;m=4.18;pr=4.40;src="NY avg";}
+  else if(p>=600&&p<=629){r=3.75;m=3.98;pr=4.20;src="IL avg";}
+  else if(p>=770&&p<=799){r=3.10;m=3.33;pr=3.55;src="TX avg";}
+  else if(p>=300&&p<=319){r=3.25;m=3.48;pr=3.70;src="GA/FL avg";}
+  else if(p>=480&&p<=499){r=3.40;m=3.63;pr=3.85;src="MI avg";}
+  else{r=3.45;m=3.68;pr=3.90;src="national avg";}
+  const prices = {regular:r, midgrade:m, premium:pr, source:src};
+  prices.active = prices[grade] || r;
+  return prices;
+}
+
+function evPrice(zip) {
+  const p = parseInt((zip||"50000").substring(0,3));
+  if(p>=900&&p<=961) return {home:0.25,dcFast:0.58,level2:0.38,source:"CA avg"};
+  if(p>=100&&p<=149) return {home:0.21,dcFast:0.52,level2:0.34,source:"NY avg"};
+  if(p>=600&&p<=629) return {home:0.16,dcFast:0.44,level2:0.30,source:"IL avg"};
+  return {home:0.14,dcFast:0.42,level2:0.28,source:"national avg"};
+}
+
+function extractZip(a) { const m=(a||"").match(/\b(\d{5})\b/); return m?m[1]:null; }
+function guessTerrain(addrs) {
+  const j = addrs.join(" ").toLowerCase();
+  if (/mountain|mt\.|ridge|peak|canyon|boulder|aspen|vail|tahoe|denver|colorado|flagstaff|reno|bozeman/.test(j)) return "Mountainous";
+  if (/hill|highland|foothills|pittsburgh|san francisco|seattle|knoxville/.test(j)) return "Hilly";
+  return "Flat";
+}
+
+const fmt$ = n => "$" + Number(n).toFixed(2);
+const IS = {width:"100%",padding:"9px 12px",borderRadius:8,border:"1px solid #2a2d3e",background:"#0f1117",color:"#e8eaf0",fontSize:13,outline:"none",boxSizing:"border-box"};
+const BS = {padding:"9px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13};
+
+function Lbl({children}) { return <div style={{fontSize:11,color:"#9ca3af",fontWeight:600,marginTop:12,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.5px"}}>{children}</div>; }
+function Row({label,value,sub,bold,warn}) { return <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:4}}><span style={{color:"#6b7280"}}>{label}</span><span style={{fontWeight:bold?700:600,color:warn?"#ef4444":sub?"#9ca3af":"#c9cdd8"}}>{value}</span></div>; }
+function Card({children,style}) { return <div style={{background:"#1e2130",borderRadius:14,padding:20,border:"1px solid #2a2d3e",...style}}>{children}</div>; }
+function Chip({children,color}) { return <div style={{display:"inline-flex",alignItems:"center",padding:"4px 10px",borderRadius:20,background:"#1e2130",border:`1px solid ${color}33`,color,fontSize:11,fontWeight:600,marginRight:6,marginTop:4}}>{children}</div>; }
+
+// ── Address autocomplete ──────────────────────────────────────────────────────
+function AddrInput({placeholder, value, onChange, onSelect}) {
+  const [sug, setSug] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const tmr = useRef(null);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  function handleChange(v) {
+    onChange(v);
+    clearTimeout(tmr.current);
+    if (v.length < 4) { setSug([]); setOpen(false); return; }
+    tmr.current = setTimeout(async () => {
+      setBusy(true);
+      try {
+        const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(v)}&countrycodes=us`);
+        const d = await r.json();
+        setSug(d.map(x => ({label: x.display_name, lat: x.lat, lon: x.lon})));
+        setOpen(d.length > 0);
+      } catch { setSug([]); }
+      setBusy(false);
+    }, 400);
+  }
+
+  function pick(s) { onChange(s.label); onSelect && onSelect(s); setSug([]); setOpen(false); }
+
+  return (
+    <div ref={ref} style={{position:"relative"}}>
+      <div style={{position:"relative"}}>
+        <input value={value} onChange={e=>handleChange(e.target.value)} placeholder={placeholder} style={IS}/>
+        {busy && <span className="spin" style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",fontSize:14,color:"#4f8ef7"}}>↻</span>}
+      </div>
+      {open && sug.length > 0 && (
+        <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#1a1d2e",border:"1px solid #2a2d3e",borderRadius:8,zIndex:999,maxHeight:200,overflowY:"auto",marginTop:2,boxShadow:"0 8px 24px rgba(0,0,0,0.5)"}}>
+          {sug.map((s,i) => (
+            <div key={i} className="aci" onMouseDown={()=>pick(s)} style={{padding:"9px 14px",cursor:"pointer",fontSize:12,color:"#c9cdd8",borderBottom:i<sug.length-1?"1px solid #2a2d3e":"none"}}>
+              📍 {s.label.length > 70 ? s.label.substring(0,70)+"…" : s.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Car Picker ────────────────────────────────────────────────────────────────
+function CarPicker({onSelect}) {
+  const [year, setYear] = useState("2022");
+  const [make, setMake] = useState("");
+  const [model, setModel] = useState("");
+  const [era, setEra] = useState("");
+  const [trim, setTrim] = useState("");
+
+  const models = make ? Object.keys(DB[make] || {}).sort() : [];
+  const eras   = (make && model) ? Object.keys(DB[make]?.[model] || {}) : [];
+  const activeEra = era || findEra(make, model, year);
+  const trims  = (make && model && activeEra) ? Object.keys(DB[make]?.[model]?.[activeEra] || {}) : [];
+  const spec   = (make && model && activeEra && trim) ? (DB[make]?.[model]?.[activeEra]?.[trim] || null) : null;
+
+  function handleMake(v)  { setMake(v); setModel(""); setEra(""); setTrim(""); }
+  function handleModel(v) { setModel(v); setTrim(""); setEra(findEra(make, v, year) || ""); }
+  function handleYear(v)  { setYear(v); setTrim(""); if (make && model) setEra(findEra(make, model, v) || ""); }
+  function handleEra(v)   { setEra(v); setTrim(""); }
+  function handleTrim(v)  {
+    setTrim(v);
+    const currentEra = era || findEra(make, model, year);
+    const s = DB[make]?.[model]?.[currentEra]?.[v];
+    if (s) onSelect({year, make, model, era: currentEra, trim: v, ...s});
+  }
+
+  return (
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"90px 1fr",gap:8}}>
+        <div>
+          <Lbl>Year</Lbl>
+          <select value={year} onChange={e=>handleYear(e.target.value)} style={IS}>
+            {YEARS.map(y=><option key={y}>{y}</option>)}
+          </select>
+        </div>
+        <div>
+          <Lbl>Make</Lbl>
+          <select value={make} onChange={e=>handleMake(e.target.value)} style={IS}>
+            <option value="">Select make…</option>
+            {Object.keys(DB).sort().map(m=><option key={m}>{m}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {make && (
+        <div style={{marginTop:8}}>
+          <Lbl>Model</Lbl>
+          <select value={model} onChange={e=>handleModel(e.target.value)} style={IS}>
+            <option value="">Select model…</option>
+            {models.map(m=><option key={m}>{m}</option>)}
+          </select>
+        </div>
+      )}
+
+      {model && eras.length > 1 && (
+        <div style={{marginTop:8}}>
+          <Lbl>Year Range <span style={{color:"#4b5563",fontWeight:400}}>(auto-matched to {findEra(make,model,year)||"—"})</span></Lbl>
+          <select value={activeEra} onChange={e=>handleEra(e.target.value)} style={IS}>
+            {eras.map(e=><option key={e}>{e}</option>)}
+          </select>
+        </div>
+      )}
+
+      {model && activeEra && trims.length > 0 && (
+        <div style={{marginTop:8}}>
+          <Lbl>Trim / Engine</Lbl>
+          <select value={trim} onChange={e=>handleTrim(e.target.value)} style={IS}>
+            <option value="">Select trim…</option>
+            {trims.map(t => {
+              const s = DB[make]?.[model]?.[activeEra]?.[t];
+              if (!s) return null;
+              const tag = s.type==="ev" ? `⚡ ${s.range}mi` : `⛽ ${s.mpg}mpg · ${GRADE_LABELS[s.grade]||"Regular"}`;
+              return <option key={t} value={t}>{t} — {tag}</option>;
+            })}
+          </select>
+        </div>
+      )}
+
+      {spec && (
+        <div style={{marginTop:10,padding:"10px 14px",background:"#0f1117",borderRadius:8,fontSize:12}}>
+          {spec.type==="ev"
+            ? <span style={{color:"#4f8ef7"}}>⚡ EV · <b>{spec.range}mi</b> EPA range · <b>{spec.battery} kWh</b> · <b>{spec.efficiency} mi/kWh</b></span>
+            : <span style={{color:"#fb923c"}}>⛽ Gas · <b>{spec.mpg} MPG</b> EPA · <b>{spec.tank} gal</b> tank · <b>{GRADE_LABELS[spec.grade]||"Regular"}</b></span>}
+        </div>
+      )}
+
+      {!trim && model && activeEra && trims.length > 0 && (
+        <div style={{marginTop:6,fontSize:11,color:"#6b7280",textAlign:"center"}}>↑ Select a trim to activate Save</div>
+      )}
+      {model && !activeEra && (
+        <div style={{marginTop:6,fontSize:11,color:"#ef4444",textAlign:"center"}}>No data for {year} {make} {model} — try another year</div>
+      )}
+    </div>
+  );
+}
+
+// ── Savings Chart ─────────────────────────────────────────────────────────────
+function SavingsChart({carResults, annualTrips, period}) {
+  const mult = period === "monthly" ? annualTrips / 12 : annualTrips;
+  const data = carResults.map(r => ({
+    name: r.car.name, type: r.type,
+    total: (r.type==="gas" ? r.tripCost : r.tripHome) * mult,
+    model: `${r.car.year} ${r.car.make} ${r.car.model}`
+  }));
+  const minCost = Math.min(...data.map(d=>d.total));
+  const maxCost = Math.max(...data.map(d=>d.total));
+  const icon = period==="monthly" ? "📅" : "📆";
+  const title = period==="monthly" ? "Monthly Cost" : "Annual Cost";
+  const sub = period==="monthly" ? `${(annualTrips/12).toFixed(1)} trips/mo` : `${annualTrips} trips/yr`;
+
+  return (
+    <div style={{background:"#1a1d2e",borderRadius:12,padding:20,border:"1px solid #2a2d3e"}}>
+      <div style={{fontSize:14,fontWeight:700,marginBottom:3}}>{icon} {title}</div>
+      <div style={{fontSize:11,color:"#6b7280",marginBottom:16}}>{sub} · cheapest = baseline</div>
+      {data.map((d,i) => {
+        const isBase = Math.abs(d.total - minCost) < 0.01;
+        const extra  = d.total - minCost;
+        const color  = isBase ? "#22c55e" : d.type==="ev" ? "#4f8ef7" : "#fb923c";
+        const pct    = maxCost > 0 ? (d.total / maxCost) * 100 : 0;
+        return (
+          <div key={i} style={{marginBottom:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+              <div>
+                <span style={{fontWeight:600,fontSize:12,color}}>{d.name}</span>
+                <span style={{fontSize:10,color:"#6b7280",marginLeft:6}}>{d.model}</span>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <span style={{fontWeight:700,fontSize:13}}>${d.total.toFixed(0)}</span>
+                {!isBase && extra > 0 && <span style={{fontSize:10,color:"#ef4444",marginLeft:5}}>+${extra.toFixed(0)}</span>}
+                {isBase && <span style={{fontSize:10,color:"#22c55e",marginLeft:5}}>⭐ cheapest</span>}
+              </div>
+            </div>
+            <div style={{height:26,background:"#0f1117",borderRadius:5,overflow:"hidden"}}>
+              <div style={{height:"100%",width:`${pct}%`,background:color,borderRadius:5,minWidth:4,transition:"width 0.4s",display:"flex",alignItems:"center",paddingLeft:8}}>
+                {pct > 28 && <span style={{fontSize:10,fontWeight:600,color:"#fff",whiteSpace:"nowrap"}}>{d.type==="ev" ? "⚡ EV" : "⛽ Gas"}</span>}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Main App ──────────────────────────────────────────────────────────────────
+function App() {
+  const [tab, setTab] = useState("plan");
+  const [garage, setGarage] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("tc5") || "[]"); } catch { return []; }
+  });
+  const [selected, setSelected] = useState([]);
+
+  // Route
+  const [origin, setOrigin] = useState("");
+  const [originCoord, setOriginCoord] = useState(null);
+  const [dest, setDest] = useState("");
+  const [destCoord, setDestCoord] = useState(null);
+  const [stops, setStops] = useState([]);
+  const [miles, setMiles] = useState("");
+  const [roundTrip, setRoundTrip] = useState(true);
+  const [tripsPerWeek, setTripsPerWeek] = useState("");
+  const [routeLoading, setRouteLoading] = useState(false);
+
+  // Conditions
+  const [season, setSeason] = useState("Summer (Jun-Aug)");
+  const [tempOverride, setTempOverride] = useState("");
+  const [weatherOverride, setWeatherOverride] = useState("");
+  const [traffic, setTraffic] = useState("Moderate");
+
+  // Garage add
+  const [showAdd, setShowAdd] = useState(false);
+  const [addSpec, setAddSpec] = useState(null);
+  const [addNick, setAddNick] = useState("");
+  const [addFuel, setAddFuel] = useState(100);
+  const [addGrade, setAddGrade] = useState("regular");
+  const [addRealMpg, setAddRealMpg] = useState("");
+
+  // Results
+  const [results, setResults] = useState(null);
+  const [breakdown, setBreakdown] = useState(null);
+  const [aiText, setAiText] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+
+  useEffect(() => {
+    try { localStorage.setItem("tc5", JSON.stringify(garage)); } catch {}
+  }, [garage]);
+
+  // Auto-route calculation
+  useEffect(() => {
+    const coords = [originCoord, ...stops.map(s=>s.coord), destCoord].filter(Boolean);
+    if (coords.length < 2) return;
+    setRouteLoading(true);
+    (async () => {
+      try {
+        const wpts = coords.map(c=>`${c.lon},${c.lat}`).join(";");
+        const r = await fetch(`https://router.project-osrm.org/route/v1/driving/${wpts}?overview=false`);
+        const d = await r.json();
+        if (d.routes?.[0]) {
+          const mi = d.routes[0].distance / 1609.344;
+          setMiles((roundTrip ? mi * 2 : mi).toFixed(1));
+        }
+      } catch {}
+      setRouteLoading(false);
+    })();
+  }, [originCoord, destCoord, stops, roundTrip]);
+
+  const allAddrs = [origin, dest, ...stops.map(s=>s.value)].filter(Boolean);
+  const detectedZip = allAddrs.map(extractZip).find(Boolean) || "";
+  const terrain = guessTerrain(allAddrs);
+  const sd = SEASON_DEFAULTS[season] || {tempF:72, weather:"Clear"};
+  const effTemp = tempOverride || sd.tempF;
+  const effWeather = weatherOverride || sd.weather;
+  const annualTrips = tripsPerWeek ? Math.round(parseFloat(tripsPerWeek) * 52) : null;
+
+  function toggleCar(id) { setSelected(p => p.includes(id) ? p.filter(x=>x!==id) : [...p,id]); }
+
+  function saveCar() {
+    if (!addSpec || !addNick) return;
+    const car = {
+      id: Date.now(),
+      name: addNick,
+      fuelLevel: parseFloat(addFuel) || 100,
+      gasGrade: addSpec.type === "gas" ? addGrade : undefined,
+      realMpg: addRealMpg ? parseFloat(addRealMpg) : null,
+      ...addSpec
+    };
+    setGarage(p => [...p, car]);
+    setShowAdd(false);
+    setAddSpec(null); setAddNick(""); setAddFuel(100); setAddGrade("regular"); setAddRealMpg("");
+  }
+
+  function calculate() {
+    if (!miles || selected.length === 0) return;
+    const dist = parseFloat(miles);
+    const zip = detectedZip;
+    const evM = evMult({tempF: effTemp, terrain, traffic, weather: effWeather});
+    const gasM = gasMult({terrain, traffic, weather: effWeather});
+    const evRates = evPrice(zip);
+
+    const carResults = selected.map(id => {
+      const car = garage.find(c => c.id === id);
+      if (!car) return null;
+
+      if (car.type === "gas") {
+        const grade = car.gasGrade || car.grade || "regular";
+        const gp = gasPrice(zip, grade);
+        const baseMpg = car.realMpg || car.mpg;
+        const effMpg = baseMpg * gasM.mult;
+        const gal = dist / effMpg;
+        const curGal = (car.fuelLevel / 100) * (car.tank || 15);
+        const short = Math.max(0, gal - curGal);
+        const tripCost = gal * gp.active;
+        const cpm = tripCost / dist;
+        const annual = annualTrips ? tripCost * annualTrips : null;
+        return {car, type:"gas", effMpg:effMpg.toFixed(1), baseMpg, gal:gal.toFixed(2),
+          short:short.toFixed(2), stopNeeded:short>0, tripCost, cpm, annual,
+          gp, evRates, grade, factors:gasM.factors,
+          epaNote:`EPA: ${car.mpg} MPG${car.realMpg ? ` · Your real-world: ${car.realMpg} MPG` : ""}`,
+          adjPct:((gasM.mult-1)*100).toFixed(0)};
+      } else {
+        const adjRange = (car.range || 250) * evM.mult;
+        const kwh = dist / ((car.efficiency || 3.2) * evM.mult);
+        const curKwh = (car.fuelLevel / 100) * (car.battery || 75);
+        const short = Math.max(0, kwh - curKwh);
+        const chStops = short > 0 ? Math.ceil(short / ((car.battery || 75) * 0.8)) : 0;
+        const tripHome = kwh * evRates.home;
+        const tripL2 = kwh * evRates.level2;
+        const tripDC = kwh * evRates.dcFast;
+        const cpm = tripHome / dist;
+        const annual = annualTrips ? tripHome * annualTrips : null;
+        return {car, type:"ev", adjRange:adjRange.toFixed(0), evM:evM.mult, kwh:kwh.toFixed(1),
+          short:short.toFixed(1), stopNeeded:short>0, chargingStops:chStops,
+          tripHome, tripL2, tripDC, cpm, annual, evRates, factors:evM.factors,
+          epaNote:`EPA: ${car.range}mi range · Today adj: ${adjRange.toFixed(0)}mi`,
+          adjPct:((evM.mult-1)*100).toFixed(0)};
+      }
+    }).filter(Boolean);
+
+    setResults({carResults, dist, terrain, zip, effTemp, effWeather, traffic, annualTrips, roundTrip});
+    setTab("results");
+    fetchAI(carResults, dist);
+  }
+
+  async function fetchAI(carResults, dist) {
+    setAiLoading(true); setAiText("");
+    try {
+      const summary = carResults.map(r => r.type==="gas"
+        ? `${r.car.name} (${r.car.year} ${r.car.make} ${r.car.model}, gas): ${fmt$(r.tripCost)}/trip, ${r.effMpg}mpg effective`
+        : `${r.car.name} (${r.car.year} ${r.car.make} ${r.car.model}, EV): ${fmt$(r.tripHome)}/trip home charging, ${r.adjRange}mi adj range`
+      ).join("\n");
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({model:"claude-sonnet-4-6", max_tokens:700,
+          system:"Concise automotive cost analyst. 2-3 short paragraphs max. No markdown or bullets. Use specific numbers.",
+          messages:[{role:"user", content:`${dist} miles, ${season}, ${terrain} terrain, ${traffic} traffic, ${effWeather}, ${effTemp}F, ZIP ${detectedZip||"unknown"}.\n${summary}\nSharp comparison, EV caveats if relevant, one clear recommendation.`}]})
+      });
+      const d = await res.json();
+      setAiText(d.content?.find(b=>b.type==="text")?.text || "");
+    } catch { setAiText("AI analysis unavailable."); }
+    setAiLoading(false);
+  }
+
+  const TABS = [["plan","📍 Plan Trip"],["garage",`🚗 Garage (${garage.length})`],["results","📊 Results"]];
+
+  return (
+    <div style={{minHeight:"100vh",background:"#0f1117"}}>
+      {/* Header */}
+      <div style={{background:"linear-gradient(135deg,#1a1d2e,#0f1117)",borderBottom:"1px solid #2a2d3e",padding:"24px 24px 0"}}>
+        <div style={{maxWidth:980,margin:"0 auto"}}>
+          <div style={{marginBottom:20}}>
+            <div style={{fontSize:28,fontWeight:800,color:"#fff",letterSpacing:"-1px"}}><span style={{color:"#4f8ef7"}}>⚡</span> TripCost</div>
+            <div style={{fontSize:13,color:"#6b7280",marginTop:3}}>Gas vs. EV · Real conditions · Real savings</div>
+          </div>
+          <div style={{display:"flex",gap:4}}>
+            {TABS.map(([key,label]) => (
+              <button key={key} onClick={()=>setTab(key)} style={{padding:"14px 28px",borderRadius:"10px 10px 0 0",border:"none",cursor:"pointer",fontSize:15,fontWeight:700,background:tab===key?"#0f1117":"#16192a",color:tab===key?"#4f8ef7":"#6b7280",borderTop:tab===key?"2px solid #4f8ef7":"2px solid transparent"}}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{maxWidth:980,margin:"0 auto",padding:"28px 16px"}}>
+
+        {/* ─── PLAN ─────────────────────────────────────────────────────────── */}
+        {tab==="plan" && (
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:20}}>
+            {/* Route */}
+            <div style={{gridColumn:"1 / -1"}}>
+              <Card>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                  <div>
+                    <div style={{fontSize:15,fontWeight:700}}>🗺️ Trip Route</div>
+                    <div style={{fontSize:12,color:"#6b7280",marginTop:2}}>Type to see address suggestions</div>
+                  </div>
+                  <button onClick={()=>setRoundTrip(r=>!r)} style={{...BS,background:roundTrip?"#4f8ef7":"#1a2240",color:roundTrip?"#fff":"#4f8ef7",fontWeight:700,fontSize:12,border:`1px solid ${roundTrip?"#4f8ef7":"#2a2d3e"}`}}>
+                    🔄 Round Trip {roundTrip?"ON":"OFF"}
+                  </button>
+                </div>
+
+                <Lbl>Origin</Lbl>
+                <AddrInput placeholder="e.g. 123 Main St, Chicago, IL 60601" value={origin} onChange={setOrigin} onSelect={s=>{setOrigin(s.label); setOriginCoord({lat:s.lat,lon:s.lon});}}/>
+
+                {stops.map((stop,i) => (
+                  <div key={stop.id} style={{display:"flex",gap:8,alignItems:"flex-end",marginTop:8}}>
+                    <div style={{flex:1}}>
+                      <Lbl>Stop {i+1}</Lbl>
+                      <AddrInput placeholder="Enter stop address" value={stop.value} onChange={v=>setStops(p=>p.map(s=>s.id===stop.id?{...s,value:v}:s))} onSelect={s=>setStops(p=>p.map(x=>x.id===stop.id?{...x,value:s.label,coord:{lat:s.lat,lon:s.lon}}:x))}/>
+                    </div>
+                    <button onClick={()=>setStops(p=>p.filter(s=>s.id!==stop.id))} style={{...BS,background:"#3f1f1f",color:"#ef4444",padding:"9px 12px",marginBottom:1}}>✕</button>
+                  </div>
+                ))}
+
+                <Lbl>Destination</Lbl>
+                <AddrInput placeholder="e.g. 456 Oak Ave, Naperville, IL 60540" value={dest} onChange={setDest} onSelect={s=>{setDest(s.label); setDestCoord({lat:s.lat,lon:s.lon});}}/>
+
+                <button onClick={()=>setStops(p=>[...p,{id:Date.now(),value:"",coord:null}])} style={{...BS,background:"#1a2240",color:"#4f8ef7",width:"100%",marginTop:10,fontWeight:600}}>+ Add Stop</button>
+
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:16}}>
+                  <div>
+                    <Lbl>Total Miles {routeLoading && <span className="spin" style={{color:"#4f8ef7",marginLeft:4}}>↻</span>} {roundTrip && <span style={{color:"#4f8ef7",fontWeight:400}}>(round trip)</span>}</Lbl>
+                    <input type="number" placeholder={routeLoading?"Calculating…":"Auto-calculated or enter manually"} value={miles} onChange={e=>setMiles(e.target.value)} style={IS}/>
+                  </div>
+                  <div>
+                    <Lbl>Trips per week <span style={{color:"#4b5563",fontWeight:400}}>(unlocks cost graphs)</span></Lbl>
+                    <input type="number" placeholder="e.g. 5 for daily commute" value={tripsPerWeek} onChange={e=>setTripsPerWeek(e.target.value)} style={IS}/>
+                  </div>
+                </div>
+
+                {allAddrs.length > 0 && (
+                  <div style={{marginTop:14,display:"flex",flexWrap:"wrap",gap:4}}>
+                    {detectedZip && <Chip color="#22c55e">📍 ZIP {detectedZip}</Chip>}
+                    <Chip color="#4f8ef7">🏔️ {terrain}</Chip>
+                    <Chip color="#f59e0b">🌡️ {effTemp}°F</Chip>
+                    <Chip color="#9ca3af">☁️ {effWeather}</Chip>
+                    {annualTrips && <Chip color="#a78bfa">📅 ~{annualTrips} trips/yr</Chip>}
+                    {roundTrip && <Chip color="#4f8ef7">🔄 Round trip</Chip>}
+                  </div>
+                )}
+              </Card>
+            </div>
+
+            {/* Conditions */}
+            <Card>
+              <div style={{fontSize:15,fontWeight:700,marginBottom:4}}>🌤️ Conditions</div>
+              <div style={{fontSize:12,color:"#6b7280"}}>Season sets defaults — override if needed</div>
+              <Lbl>Season</Lbl>
+              <select value={season} onChange={e=>{setSeason(e.target.value);setTempOverride("");setWeatherOverride("");}} style={IS}>
+                {SEASONS.map(s=><option key={s}>{s}</option>)}
+              </select>
+              <Lbl>Temp °F <span style={{color:"#4b5563",fontWeight:400}}>(default: {sd.tempF}°F)</span></Lbl>
+              <input type="number" placeholder={`Default ${sd.tempF}°F`} value={tempOverride} onChange={e=>setTempOverride(e.target.value)} style={IS}/>
+              <Lbl>Weather <span style={{color:"#4b5563",fontWeight:400}}>(default: {sd.weather})</span></Lbl>
+              <select value={effWeather} onChange={e=>setWeatherOverride(e.target.value===sd.weather?"":e.target.value)} style={IS}>
+                {WEATHER_OPTIONS.map(w=><option key={w}>{w}</option>)}
+              </select>
+              <Lbl>Traffic</Lbl>
+              <select value={traffic} onChange={e=>setTraffic(e.target.value)} style={IS}>
+                {TRAFFIC_OPTIONS.map(t=><option key={t}>{t}</option>)}
+              </select>
+            </Card>
+
+            {/* Car selection */}
+            <Card>
+              <div style={{fontSize:15,fontWeight:700,marginBottom:4}}>🚗 Select Cars</div>
+              <div style={{fontSize:12,color:"#6b7280",marginBottom:12}}>Tap to toggle for comparison</div>
+              {garage.length === 0
+                ? <div style={{textAlign:"center",padding:"28px 0",color:"#4b5563"}}>No cars yet — go to <b>Garage</b> to add vehicles.</div>
+                : garage.map(car => (
+                  <div key={car.id} onClick={()=>toggleCar(car.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderRadius:8,marginBottom:8,cursor:"pointer",background:selected.includes(car.id)?"#1a2240":"#16192a",border:`1px solid ${selected.includes(car.id)?"#4f8ef7":"#2a2d3e"}`,transition:"all 0.15s"}}>
+                    <span style={{fontSize:18}}>{car.type==="ev"?"⚡":"⛽"}</span>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:600,fontSize:13}}>{car.name}</div>
+                      <div style={{fontSize:11,color:"#9ca3af"}}>{car.year} {car.make} {car.model} · {car.fuelLevel}% {car.type==="ev"?"charge":"fuel"}</div>
+                    </div>
+                    <div style={{width:20,height:20,borderRadius:"50%",border:`2px solid ${selected.includes(car.id)?"#4f8ef7":"#4b5563"}`,background:selected.includes(car.id)?"#4f8ef7":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#fff",flexShrink:0}}>
+                      {selected.includes(car.id)?"✓":""}
+                    </div>
+                  </div>
+                ))
+              }
+            </Card>
+
+            {/* Calculate */}
+            <div style={{gridColumn:"1 / -1"}}>
+              <button onClick={calculate} disabled={!miles||selected.length===0} style={{width:"100%",padding:16,borderRadius:12,border:"none",cursor:(!miles||selected.length===0)?"not-allowed":"pointer",background:(!miles||selected.length===0)?"#1e2130":"linear-gradient(135deg,#4f8ef7,#7c3aed)",color:(!miles||selected.length===0)?"#4b5563":"#fff",fontSize:17,fontWeight:800}}>
+                {!miles ? "Enter miles or pick addresses to auto-calculate" : selected.length===0 ? "Select at least one car from Garage" : "Calculate Trip Costs →"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ─── GARAGE ───────────────────────────────────────────────────────── */}
+        {tab==="garage" && (
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+              <div>
+                <div style={{fontSize:18,fontWeight:700}}>My Garage</div>
+                <div style={{fontSize:13,color:"#6b7280"}}>Save vehicles for quick trip comparisons</div>
+              </div>
+              <button onClick={()=>setShowAdd(true)} style={{...BS,background:"#4f8ef7",color:"#fff",fontWeight:700,fontSize:14}}>+ Add Vehicle</button>
+            </div>
+
+            {garage.length === 0 && (
+              <div style={{textAlign:"center",padding:"60px 0",color:"#4b5563"}}>
+                <div style={{fontSize:52}}>🚗</div>
+                <div style={{fontSize:16,fontWeight:700,marginTop:14,color:"#6b7280"}}>Garage is empty</div>
+                <div style={{fontSize:13,marginTop:6}}>Add your vehicles to start comparing trips</div>
+              </div>
+            )}
+
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:16}}>
+              {garage.map(car => (
+                <Card key={car.id}>
+                  <div style={{display:"flex",justifyContent:"space-between"}}>
+                    <span style={{fontSize:28}}>{car.type==="ev"?"⚡":"⛽"}</span>
+                    <button onClick={()=>setGarage(g=>g.filter(c=>c.id!==car.id))} style={{background:"none",border:"none",color:"#4b5563",cursor:"pointer",fontSize:18}}>✕</button>
+                  </div>
+                  <div style={{fontWeight:700,fontSize:15,marginTop:8}}>{car.name}</div>
+                  <div style={{fontSize:11,color:"#9ca3af",marginBottom:12}}>{car.year} {car.make} {car.model}<br/>{car.trim}</div>
+                  <Row label={car.type==="ev"?"EPA Range":"EPA MPG"} value={car.type==="ev"?`${car.range}mi`:`${car.mpg}mpg`}/>
+                  {car.realMpg && <Row label="Real-world MPG" value={`${car.realMpg}mpg ✓`} bold/>}
+                  {car.type==="gas" && <Row label="Fuel grade" value={GRADE_LABELS[car.gasGrade||car.grade||"regular"]}/>}
+                  <Row label={car.type==="ev"?"Battery":"Tank"} value={car.type==="ev"?`${car.battery} kWh`:`${car.tank} gal`}/>
+                  <Row label="Current level" value={`${car.fuelLevel}%`}/>
+                  <div style={{marginTop:8,height:6,borderRadius:3,background:"#2a2d3e"}}>
+                    <div style={{width:`${car.fuelLevel}%`,height:"100%",borderRadius:3,background:car.fuelLevel>50?"#22c55e":car.fuelLevel>25?"#fb923c":"#ef4444"}}/>
+                  </div>
+                </Card>
+              ))}
+            </div>
+
+            {/* Add Car Modal */}
+            {showAdd && (
+              <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200}}>
+                <div style={{background:"#1a1d2e",borderRadius:16,padding:28,width:"min(560px,94vw)",border:"1px solid #2a2d3e",maxHeight:"92vh",overflowY:"auto"}}>
+                  <div style={{fontSize:17,fontWeight:700,marginBottom:20}}>Add Vehicle</div>
+
+                  <CarPicker onSelect={s => { setAddSpec(s); setAddGrade(s.grade || "regular"); }}/>
+
+                  <Lbl>Nickname</Lbl>
+                  <input placeholder='e.g. "My Truck", "Wife&apos;s Tesla"' value={addNick} onChange={e=>setAddNick(e.target.value)} style={IS}/>
+
+                  <Lbl>Current fuel / charge level (%)</Lbl>
+                  <input type="number" min="0" max="100" value={addFuel} onChange={e=>setAddFuel(e.target.value)} style={IS}/>
+                  <div style={{marginTop:6,height:6,borderRadius:3,background:"#2a2d3e"}}>
+                    <div style={{width:`${Math.min(100,Math.max(0,addFuel))}%`,height:"100%",borderRadius:3,background:addFuel>50?"#22c55e":addFuel>25?"#fb923c":"#ef4444",transition:"width 0.2s"}}/>
+                  </div>
+
+                  {addSpec?.type==="gas" && (
+                    <>
+                      <Lbl>Gas grade <span style={{color:"#4b5563",fontWeight:400}}>(auto-set from trim)</span></Lbl>
+                      <select value={addGrade} onChange={e=>setAddGrade(e.target.value)} style={IS}>
+                        {Object.entries(GRADE_LABELS).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+                      </select>
+                      <Lbl>Real-world MPG <span style={{color:"#4b5563",fontWeight:400}}>(optional — overrides EPA)</span></Lbl>
+                      <input type="number" placeholder={`EPA: ${addSpec?.mpg}mpg — enter yours if you track it`} value={addRealMpg} onChange={e=>setAddRealMpg(e.target.value)} style={IS}/>
+                    </>
+                  )}
+
+                  <div style={{display:"flex",gap:10,marginTop:20}}>
+                    <button onClick={()=>{setShowAdd(false);setAddSpec(null);setAddNick("");setAddFuel(100);setAddGrade("regular");setAddRealMpg("");}} style={{...BS,flex:1,background:"#1e2130",color:"#9ca3af"}}>Cancel</button>
+                    <button onClick={saveCar} disabled={!addSpec||!addNick} style={{...BS,flex:1,background:(!addSpec||!addNick)?"#1e2130":"#4f8ef7",color:(!addSpec||!addNick)?"#4b5563":"#fff",fontWeight:700}}>
+                      {!addSpec ? "Pick a trim first" : !addNick ? "Add a nickname" : "Save Vehicle"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ─── RESULTS ──────────────────────────────────────────────────────── */}
+        {tab==="results" && (
+          <div>
+            {!results ? (
+              <div style={{textAlign:"center",padding:"60px 0",color:"#4b5563"}}>
+                <div style={{fontSize:52}}>📊</div>
+                <div style={{fontSize:16,fontWeight:700,marginTop:14,color:"#6b7280"}}>No results yet</div>
+                <div style={{fontSize:13,marginTop:6}}>Plan a trip and hit Calculate</div>
+              </div>
+            ) : (
+              <div>
+                <div style={{marginBottom:20}}>
+                  <div style={{fontSize:18,fontWeight:700}}>Trip Results {results.roundTrip?"(Round Trip)":""}</div>
+                  <div style={{fontSize:13,color:"#6b7280",marginTop:3}}>
+                    {results.dist}mi · {results.terrain} · {results.traffic} traffic · {results.effWeather} · {results.effTemp}°F{results.zip?` · ZIP ${results.zip}`:""}
+                  </div>
+                </div>
+
+                {/* Car result cards */}
+                <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(results.carResults.length,3)},1fr)`,gap:16,marginBottom:20}}>
+                  {results.carResults.map((r,i) => {
+                    const cost = r.type==="gas" ? r.tripCost : r.tripHome;
+                    const lowest = Math.min(...results.carResults.map(x=>x.type==="gas"?x.tripCost:x.tripHome));
+                    const isWinner = results.carResults.length > 1 && Math.abs(cost-lowest) < 0.01;
+                    return (
+                      <div key={i} style={{background:isWinner?"linear-gradient(135deg,#1a2a1a,#111418)":"#1e2130",border:`1px solid ${isWinner?"#22c55e":"#2a2d3e"}`,borderRadius:14,padding:"18px 16px",position:"relative"}}>
+                        {isWinner && <div style={{position:"absolute",top:-11,right:14,background:"#22c55e",color:"#000",fontSize:10,fontWeight:800,padding:"3px 10px",borderRadius:20}}>CHEAPEST</div>}
+                        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
+                          <span style={{fontSize:20}}>{r.type==="ev"?"⚡":"⛽"}</span>
+                          <div>
+                            <div style={{fontWeight:700,fontSize:14}}>{r.car.name}</div>
+                            <div style={{fontSize:10,color:"#9ca3af"}}>{r.car.year} {r.car.make} {r.car.model} · {r.car.trim}</div>
+                          </div>
+                        </div>
+
+                        <div style={{fontSize:36,fontWeight:800,letterSpacing:"-1.5px",color:isWinner?"#4ade80":"#fff",lineHeight:1}}>{fmt$(cost)}</div>
+                        <div style={{fontSize:11,marginBottom:14,marginTop:3}}>
+                          {r.type==="ev"
+                            ? <span style={{color:"#4f8ef7",fontWeight:600}}>⚡ Home charging · {fmt$(r.evRates.home)}/kWh · {r.evRates.source}</span>
+                            : <span style={{color:"#fb923c",fontWeight:600}}>⛽ {GRADE_LABELS[r.grade]||"Regular"} gas · {fmt$(r.gp.active)}/gal · {r.gp.source}</span>}
+                        </div>
+
+                        <Row label="Cost per mile" value={fmt$(r.cpm)} bold/>
+                        {r.annual != null && <Row label={`Annual (${results.annualTrips} trips)`} value={`$${r.annual.toFixed(0)}`} bold/>}
+                        <div style={{borderTop:"1px solid #2a2d3e",margin:"10px 0"}}/>
+
+                        {r.type==="gas" && (
+                          <>
+                            <Row label="Effective MPG" value={`${r.effMpg}mpg`}/>
+                            <Row label="Gallons needed" value={`${r.gal} gal`}/>
+                            <Row label="Regular" value={`${fmt$(r.gp.regular)}/gal · ${fmt$(parseFloat(r.gal)*r.gp.regular)}`} sub/>
+                            <Row label="Mid-Grade" value={`${fmt$(r.gp.midgrade)}/gal · ${fmt$(parseFloat(r.gal)*r.gp.midgrade)}`} sub/>
+                            <Row label="Premium" value={`${fmt$(r.gp.premium)}/gal · ${fmt$(parseFloat(r.gal)*r.gp.premium)}`} sub/>
+                            {/* Grade toggle */}
+                            <div style={{marginTop:8,display:"flex",gap:4,flexWrap:"wrap"}}>
+                              <span style={{fontSize:10,color:"#6b7280",alignSelf:"center"}}>Switch grade:</span>
+                              {["regular","midgrade","premium"].map(g=>(
+                                <button key={g} onClick={()=>{
+                                  const upd = {...results};
+                                  const cr = upd.carResults[i];
+                                  cr.grade = g;
+                                  cr.gp.active = cr.gp[g];
+                                  cr.tripCost = parseFloat(cr.gal) * cr.gp[g];
+                                  cr.cpm = cr.tripCost / results.dist;
+                                  if (results.annualTrips) cr.annual = cr.tripCost * results.annualTrips;
+                                  setResults({...upd});
+                                }} style={{padding:"4px 8px",borderRadius:6,border:"none",cursor:"pointer",fontSize:10,fontWeight:700,background:r.grade===g?"#fb923c":"#1a1d2e",color:r.grade===g?"#000":"#9ca3af"}}>
+                                  {GRADE_LABELS[g]}
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+
+                        {r.type==="ev" && (
+                          <>
+                            <Row label="Adj. range today" value={`${r.adjRange}mi`}/>
+                            <Row label="Range adjustment" value={`${r.adjPct}%`} warn={r.evM<0.80}/>
+                            <Row label="kWh needed" value={`${r.kwh} kWh`}/>
+                            <Row label="Public L2" value={fmt$(r.tripL2)} sub/>
+                            <Row label="DC Fast" value={fmt$(r.tripDC)} sub/>
+                          </>
+                        )}
+
+                        {r.stopNeeded && (
+                          <div style={{marginTop:10,padding:"9px 12px",background:"#2a1a00",borderRadius:8,color:"#fb923c",fontSize:12,fontWeight:600}}>
+                            {r.type==="gas"
+                              ? `⚠️ Need ~${r.short} more gal — gas stop required`
+                              : `⚠️ Need ~${r.short} more kWh — ${r.chargingStops} charging stop(s) needed`}
+                          </div>
+                        )}
+
+                        <button onClick={()=>setBreakdown(breakdown===i?null:i)} style={{...BS,width:"100%",marginTop:12,background:"#1a1d2e",color:"#6b7280",fontSize:11,border:"1px solid #2a2d3e"}}>
+                          {breakdown===i?"▲ Hide breakdown":"▼ How we calculated this"}
+                        </button>
+                        {breakdown===i && (
+                          <div style={{marginTop:10,padding:12,background:"#0f1117",borderRadius:8,fontSize:11}}>
+                            <div style={{color:"#4f8ef7",fontWeight:700,marginBottom:8}}>📊 Accuracy Breakdown</div>
+                            <div style={{color:"#9ca3af",marginBottom:8}}>{r.epaNote}</div>
+                            {r.factors.length > 0
+                              ? r.factors.map((f,fi)=><div key={fi} style={{color:"#6b7280",marginBottom:3}}>• {f}</div>)
+                              : <div style={{color:"#6b7280"}}>• No significant adjustments from EPA baseline</div>}
+                            <div style={{borderTop:"1px solid #2a2d3e",marginTop:8,paddingTop:8,color:parseFloat(r.adjPct)<0?"#ef4444":"#4ade80",fontWeight:600}}>
+                              Net adjustment: {r.adjPct}% from EPA
+                            </div>
+                            {r.car.realMpg && <div style={{marginTop:4,color:"#4ade80",fontSize:10}}>✓ Using your real-world {r.car.realMpg}mpg</div>}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Savings callout */}
+                {results.carResults.length >= 2 && (() => {
+                  const sorted = [...results.carResults].map(r=>({name:r.car.name,cost:r.type==="gas"?r.tripCost:r.tripHome,annual:r.annual})).sort((a,b)=>a.cost-b.cost);
+                  const saved = sorted[sorted.length-1].cost - sorted[0].cost;
+                  if (saved < 0.01) return null;
+                  const annSaved = sorted[0].annual!=null && sorted[sorted.length-1].annual!=null ? sorted[sorted.length-1].annual-sorted[0].annual : null;
+                  return (
+                    <div style={{background:"linear-gradient(135deg,#1a2240,#0f1117)",border:"1px solid #4f8ef7",borderRadius:12,padding:"16px 20px",marginBottom:20,display:"flex",gap:24,flexWrap:"wrap",alignItems:"center"}}>
+                      <div><div style={{fontSize:28,fontWeight:800,color:"#4f8ef7",letterSpacing:"-1px"}}>{fmt$(saved)}</div><div style={{fontSize:12,color:"#6b7280"}}>saved per trip with {sorted[0].name}</div></div>
+                      {annSaved!=null && <div><div style={{fontSize:28,fontWeight:800,color:"#4f8ef7",letterSpacing:"-1px"}}>${annSaved.toFixed(0)}</div><div style={{fontSize:12,color:"#6b7280"}}>annual savings ({results.annualTrips} trips/yr)</div></div>}
+                    </div>
+                  );
+                })()}
+
+                {/* Savings graphs */}
+                {results.annualTrips && results.carResults.length >= 1 && (
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:16,marginBottom:20}}>
+                    <SavingsChart carResults={results.carResults} annualTrips={results.annualTrips} period="monthly"/>
+                    <SavingsChart carResults={results.carResults} annualTrips={results.annualTrips} period="yearly"/>
+                  </div>
+                )}
+
+                {/* AI */}
+                <Card>
+                  <div style={{fontSize:13,fontWeight:700,color:"#4f8ef7",marginBottom:10}}>⚡ AI Analysis</div>
+                  {aiLoading
+                    ? <div style={{color:"#6b7280",fontSize:13}}>Analyzing your trip…</div>
+                    : <div style={{fontSize:13,lineHeight:1.75,color:"#c9cdd8",whiteSpace:"pre-wrap"}}>{aiText||"—"}</div>}
+                </Card>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div style={{textAlign:"center",padding:20,borderTop:"1px solid #1e2130",color:"#374151",fontSize:11}}>
+        Estimates use EPA ratings adjusted for real-world conditions · Routing via OpenStreetMap · Gas prices are regional averages
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
